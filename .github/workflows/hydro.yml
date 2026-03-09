@@ -3,7 +3,7 @@ name: Update Hydro Outages
 on:
   schedule:
     - cron: '*/15 * * * *'  # toutes les 15 minutes
-  workflow_dispatch:        # permet de lancer manuellement
+  workflow_dispatch:        # permet un déclenchement manuel
 
 jobs:
   update_outages:
