@@ -43,14 +43,20 @@ def update_outages_history(output_file="hydroquebec_history.csv"):
         # Traduction cause
         def classify_cause(code):
             try:
+                if code is None: return "unknown"
                 c = int(code)
-                if 21 <= c <= 26: return "weather"
-                if c == 51: return "vegetation"
-                if c in [52,53]: return "animal"
-                if 11 <= c <= 15 or c in [58,70,72,73,74,79]: return "equipment"
-                if 31 <= c <= 57: return "accident"
+        
+                # Mapping based on Hydro-Quebec's common outage codes
+                if 21 <= c <= 26: return "weather"        # Ice, Wind, Lightning
+                if c == 51:       return "vegetation"     # Trees/Branches
+                if c in [52, 53]: return "animal"         # Birds, Squirrels
+                if c in [1, 2, 3, 11, 12, 13, 14, 15, 58, 70, 72, 73, 74, 79]: 
+                    return "equipment"                    # Breakage, Maintenance, Aging
+                if 31 <= c <= 40: return "accident"       # Vehicle impact, Excavation
+                if c == 99:       return "investigation"  # Being looked into
+        
                 return "other"
-            except:
+            except (ValueError, TypeError):
                 return "unknown"
 
         new_df["cause_label"] = new_df["cause_code"].apply(classify_cause)
@@ -71,3 +77,4 @@ def update_outages_history(output_file="hydroquebec_history.csv"):
 
 if __name__ == "__main__":
     update_outages_history()
+
