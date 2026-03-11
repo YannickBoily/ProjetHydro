@@ -53,7 +53,7 @@ def update_outages_history(output_file="hydroquebec_history.csv"):
                 if c in [1, 2, 3, 11, 12, 13, 14, 15, 58, 70, 72, 73, 74, 79]: 
                     return "equipment"                    # Breakage, Maintenance, Aging
                 if 31 <= c <= 40: return "accident"       # Vehicle impact, Excavation
-                if c in [41,42,43,44,54,55,56,57] return "accident"
+                if c in [41,42,43,44,54,55,56,57]: return "accident"
                 if c == 99:       return "investigation"  # Being looked into
         
                 return "other"
@@ -78,5 +78,6 @@ def update_outages_history(output_file="hydroquebec_history.csv"):
 
 if __name__ == "__main__":
     update_outages_history()
+
 
 
