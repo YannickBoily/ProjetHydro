@@ -77,7 +77,18 @@ SELECT
 
     k.known_cause_last_seen_at,
 
+    -- Municipalité enrichie par jointure géospatiale
     r.municipality_id,
+    COALESCE(
+        m.municipality_label,
+        'Municipalité ' || CAST(r.municipality_id AS VARCHAR)
+    ) AS municipality_label,
+    m.municipality_name,
+    m.municipality_full_name,
+    m.mrc_name,
+    m.region_name,
+    m.is_geocoded,
+
     r.captured_at AS active_capture_at,
 
     s.first_capture_at,
@@ -102,5 +113,7 @@ LEFT JOIN outage_capture_stats s
 LEFT JOIN known_cause_ranked k
     ON r.outage_id = k.outage_id
    AND k.cause_row_num = 1
+LEFT JOIN dim_municipalities m
+    ON r.municipality_id = m.municipality_id
 WHERE r.row_num = 1
 ORDER BY r.customers_affected DESC;

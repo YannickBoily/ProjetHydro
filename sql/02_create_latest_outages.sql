@@ -52,8 +52,7 @@ SELECT
     r.cause_code AS latest_raw_cause_code,
     r.cause_label AS latest_raw_cause_label,
 
-    -- Cause analytique enrichie :
-    -- dernière cause connue observée pour cette panne, sinon la cause brute, sinon unknown
+    -- Cause analytique enrichie
     COALESCE(k.known_cause_code, r.cause_code) AS analysis_cause_code,
     COALESCE(k.known_cause_label, r.cause_label, 'unknown') AS analysis_cause_label,
 
@@ -64,7 +63,18 @@ SELECT
 
     k.known_cause_last_seen_at,
 
+    -- Municipalité enrichie par jointure géospatiale
     r.municipality_id,
+    COALESCE(
+        m.municipality_label,
+        'Municipalité ' || CAST(r.municipality_id AS VARCHAR)
+    ) AS municipality_label,
+    m.municipality_name,
+    m.municipality_full_name,
+    m.mrc_name,
+    m.region_name,
+    m.is_geocoded,
+
     r.captured_at AS latest_row_captured_at,
 
     s.first_capture_at,
@@ -89,5 +99,7 @@ LEFT JOIN outage_capture_stats s
 LEFT JOIN known_cause_ranked k
     ON r.outage_id = k.outage_id
    AND k.cause_row_num = 1
+LEFT JOIN dim_municipalities m
+    ON r.municipality_id = m.municipality_id
 WHERE r.row_num = 1
 ORDER BY s.last_capture_at DESC, r.customers_affected DESC;
