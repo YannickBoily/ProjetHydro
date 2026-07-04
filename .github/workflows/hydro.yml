@@ -1,30 +1,36 @@
 name: Update Hydro Outages
+
 on:
   schedule:
-    - cron: '*/60 * * * *'  # toutes les 60 minutes
-  workflow_dispatch:        # lancement manuel
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
 jobs:
   update_outages:
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
+
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
+
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Run script
-        run: python gestion.py
-      - name: Commit & Push CSV
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch outage data
+        run: python scripts/fetch_outages.py
+
+      - name: Commit updated raw data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add hydroquebec_history.csv
-          git commit -m "Update CSV from GitHub Actions" || echo "No changes"
-          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git add data/raw/hydroquebec_history.csv
+          git commit -m "Update raw outage history" || echo "No changes to commit"
+          git push
