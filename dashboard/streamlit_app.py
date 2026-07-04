@@ -695,8 +695,8 @@ Elle ne montre pas seulement les pannes actives actuellement, mais les pannes ca
             with col_filters_3:
                 max_points = st.slider(
                     "Nombre maximum de points",
-                    min_value=100,
-                    max_value=10000,
+                    min_value=1,
+                    max_value=100000,
                     value=3000,
                     step=100,
                 )
@@ -763,20 +763,6 @@ Elle ne montre pas seulement les pannes actives actuellement, mais les pannes ca
                     history = history[
                         history["history_cause_label"].isin(selected_history_causes)
                     ]
-
-            if "status" in history.columns:
-                history_status_options = sorted(
-                    history["status"].dropna().astype(str).unique()
-                )
-
-                selected_history_statuses = st.multiselect(
-                    "Statuts historiques",
-                    options=history_status_options,
-                    default=[],
-                )
-
-                if selected_history_statuses:
-                    history = history[history["status"].isin(selected_history_statuses)]
 
             if "municipality_id" in history.columns:
                 history_municipality_options = sorted(
