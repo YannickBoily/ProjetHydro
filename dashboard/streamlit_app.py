@@ -18,7 +18,6 @@ LATEST_FILE = ROOT_DIR / "data" / "processed" / "latest_outages.csv"
 DAILY_FILE = ROOT_DIR / "data" / "processed" / "daily_summary.csv"
 QUALITY_FILE = ROOT_DIR / "data" / "processed" / "data_quality_report.csv"
 
-
 st.set_page_config(
     page_title="Hydro-Québec | Suivi des pannes",
     page_icon="⚡",
@@ -34,48 +33,37 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-    :root {
-        --bg-main: #0b0f17;
-        --bg-card: #151b26;
-        --bg-card-soft: #1c2433;
-        --text-main: #f8fafc;
-        --text-muted: #94a3b8;
-        --accent: #ff4b4b;
-        --accent-soft: rgba(255, 75, 75, 0.16);
-        --border: rgba(148, 163, 184, 0.22);
-    }
-
     .block-container {
-        padding-top: 1.6rem;
+        padding-top: 1.5rem;
         padding-bottom: 2rem;
-        max-width: 1540px;
+        max-width: 1560px;
     }
 
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #151923 0%, #10131b 100%);
-        border-right: 1px solid var(--border);
+        background: linear-gradient(180deg, #151923 0%, #0f131c 100%);
+        border-right: 1px solid rgba(148, 163, 184, 0.22);
     }
 
     [data-testid="stMetric"] {
         background: linear-gradient(135deg, #151b26 0%, #101622 100%);
-        border: 1px solid var(--border);
+        border: 1px solid rgba(148, 163, 184, 0.22);
         padding: 1rem 1.15rem;
         border-radius: 18px;
-        box-shadow: 0 10px 28px rgba(0,0,0,0.22);
+        box-shadow: 0 12px 30px rgba(0,0,0,0.18);
     }
 
     [data-testid="stMetricLabel"] {
-        color: var(--text-muted);
+        color: #94a3b8;
         font-size: 0.88rem;
     }
 
     [data-testid="stMetricValue"] {
         font-size: 2rem;
-        font-weight: 800;
+        font-weight: 850;
     }
 
     div[data-testid="stTabs"] button {
-        padding: 0.75rem 1rem;
+        padding: 0.75rem 0.95rem;
         font-weight: 650;
     }
 
@@ -86,60 +74,46 @@ st.markdown(
 
     .hero {
         background:
-            radial-gradient(circle at top left, rgba(255, 75, 75, 0.22), transparent 32%),
+            radial-gradient(circle at top left, rgba(255, 75, 75, 0.24), transparent 30%),
             linear-gradient(135deg, #151b26 0%, #0b0f17 68%);
-        border: 1px solid var(--border);
+        border: 1px solid rgba(148, 163, 184, 0.24);
         border-radius: 24px;
-        padding: 1.5rem 1.6rem;
-        margin-bottom: 1.15rem;
-        box-shadow: 0 16px 42px rgba(0,0,0,0.26);
+        padding: 1.45rem 1.55rem;
+        margin-bottom: 1.1rem;
+        box-shadow: 0 18px 44px rgba(0,0,0,0.26);
     }
 
     .hero-title {
         font-size: 2.35rem;
-        line-height: 1.08;
+        line-height: 1.1;
         font-weight: 900;
-        margin-bottom: 0.5rem;
+        margin-top: 0.4rem;
+        margin-bottom: 0.55rem;
         letter-spacing: -0.04em;
     }
 
     .hero-subtitle {
-        color: var(--text-muted);
+        color: #cbd5e1;
         font-size: 1.02rem;
-        max-width: 1040px;
+        max-width: 1100px;
         line-height: 1.55;
     }
 
-    .section-card {
-        background: linear-gradient(180deg, #151b26 0%, #111827 100%);
-        border: 1px solid var(--border);
-        border-radius: 22px;
-        padding: 1.15rem 1.2rem;
-        margin-bottom: 1rem;
-        box-shadow: 0 12px 32px rgba(0,0,0,0.18);
-    }
-
-    .mini-card {
-        background: #111827;
-        border: 1px solid var(--border);
-        border-radius: 18px;
-        padding: 1rem;
-    }
-
     .muted {
-        color: var(--text-muted);
+        color: #94a3b8;
     }
 
     .pill {
         display: inline-block;
         padding: 0.32rem 0.65rem;
         border-radius: 999px;
-        background: var(--accent-soft);
+        background: rgba(255, 75, 75, 0.16);
         color: #fecaca;
         border: 1px solid rgba(255,75,75,0.28);
         font-size: 0.82rem;
-        font-weight: 700;
+        font-weight: 750;
         margin-right: 0.4rem;
+        margin-bottom: 0.25rem;
     }
 
     .insight {
@@ -152,9 +126,10 @@ st.markdown(
         margin-bottom: 0.9rem;
     }
 
-    .stDataFrame {
-        border-radius: 16px;
-        overflow: hidden;
+    .small-note {
+        color: #94a3b8;
+        font-size: 0.9rem;
+        line-height: 1.45;
     }
 </style>
 """,
@@ -210,11 +185,13 @@ COLUMN_LABELS = {
     "status_fr": "Statut",
     "analysis_cause_label_fr": "Cause",
     "latest_raw_cause_label_fr": "Cause brute",
+    "history_cause_label_fr": "Cause",
     "municipality_label": "Municipalité",
     "mrc_name": "MRC",
     "region_name": "Région",
     "active_capture_at": "Capture active",
     "latest_row_captured_at": "Dernière capture",
+    "captured_at": "Capture",
     "first_capture_at": "Première capture",
     "last_capture_at": "Dernière capture",
     "capture_count": "Captures",
@@ -242,7 +219,6 @@ COLUMN_LABELS = {
     "failed_rate_pct": "Taux affecté, %",
     "description": "Description",
 }
-
 
 PLOT_TEMPLATE = "plotly_dark"
 
@@ -370,6 +346,51 @@ def add_display_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def enrich_raw_history(raw_df: pd.DataFrame, latest_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ajoute municipalité, MRC et région à l'historique brut à partir de latest_outages.
+    Le raw contient les coordonnées et municipality_id; latest contient les noms enrichis.
+    """
+    if raw_df.empty:
+        return raw_df
+
+    history = raw_df.copy()
+
+    lookup_cols = [
+        "municipality_id",
+        "municipality_label",
+        "municipality_name",
+        "mrc_name",
+        "region_name",
+        "is_geocoded",
+        "is_geocoded_fr",
+    ]
+
+    available_lookup_cols = [col for col in lookup_cols if col in latest_df.columns]
+
+    if "municipality_id" in history.columns and "municipality_id" in available_lookup_cols:
+        lookup = (
+            latest_df[available_lookup_cols]
+            .dropna(subset=["municipality_id"])
+            .drop_duplicates("municipality_id")
+        )
+
+        # Évite les doublons si une colonne existe déjà dans raw.
+        columns_to_add = [col for col in available_lookup_cols if col != "municipality_id"]
+        history = history.drop(columns=[col for col in columns_to_add if col in history.columns], errors="ignore")
+
+        history = history.merge(
+            lookup,
+            on="municipality_id",
+            how="left",
+        )
+
+    if "municipality_label" not in history.columns and "municipality_id" in history.columns:
+        history["municipality_label"] = "Municipalité " + history["municipality_id"].astype(str)
+
+    return add_display_columns(history)
+
+
 def prepare_display_table(df: pd.DataFrame, columns: list[str] | None = None) -> pd.DataFrame:
     if df.empty:
         return df.copy()
@@ -380,7 +401,6 @@ def prepare_display_table(df: pd.DataFrame, columns: list[str] | None = None) ->
         selected = [col for col in columns if col in out.columns]
         out = out[selected]
 
-    # Supprimer les colonnes brutes lorsqu'une version lisible existe.
     pairs = {
         "status_fr": "status",
         "analysis_cause_label_fr": "analysis_cause_label",
@@ -394,13 +414,12 @@ def prepare_display_table(df: pd.DataFrame, columns: list[str] | None = None) ->
         "severity_fr": "severity",
     }
 
-    for readable, raw in pairs.items():
-        if readable in out.columns and raw in out.columns:
-            out = out.drop(columns=[raw])
+    for readable, raw_col in pairs.items():
+        if readable in out.columns and raw_col in out.columns:
+            out = out.drop(columns=[raw_col])
 
     out = out.rename(columns=COLUMN_LABELS)
 
-    # Sécurité anti-colonnes dupliquées.
     seen = {}
     unique_cols = []
     for col in out.columns:
@@ -489,19 +508,6 @@ def apply_common_layout(fig, height: int | None = None):
     return fig
 
 
-def metric_delta(current, previous):
-    if previous is None or pd.isna(previous) or previous == 0:
-        return None
-    change = (current - previous) / previous * 100
-    return f"{change:+.1f} %"
-
-
-def section(title: str, caption: str | None = None):
-    st.markdown(f"### {title}")
-    if caption:
-        st.markdown(f"<div class='muted'>{caption}</div>", unsafe_allow_html=True)
-
-
 def make_download(df: pd.DataFrame, label: str, filename: str):
     csv = prepare_display_table(df).to_csv(index=False).encode("utf-8-sig")
     st.download_button(
@@ -522,6 +528,7 @@ latest = add_display_columns(load_csv(LATEST_FILE))
 daily = load_csv(DAILY_FILE)
 quality = load_csv(QUALITY_FILE)
 raw = add_display_columns(load_csv(RAW_FILE))
+history_all = enrich_raw_history(raw, latest)
 
 if not quality.empty:
     if "check_name" in quality.columns:
@@ -597,6 +604,10 @@ status_options = sorted(active["status_fr"].dropna().astype(str).unique()) if "s
 selected_statuses = st.sidebar.multiselect("Statut", status_options)
 
 
+# =============================================================================
+# Filtres actifs
+# =============================================================================
+
 filtered = active.copy()
 
 if "customers_affected" in filtered.columns:
@@ -625,7 +636,7 @@ if selected_statuses and "status_fr" in filtered.columns:
 
 
 # =============================================================================
-# Hero
+# Header
 # =============================================================================
 
 updated_at = latest_timestamp(active, latest)
@@ -641,7 +652,7 @@ st.markdown(
     <div class="hero-title">⚡ Suivi automatisé des pannes électriques au Québec</div>
     <div class="hero-subtitle">
         Tableau de bord interactif pour analyser les pannes observées, les clients affectés,
-        les causes, les régions touchées et la qualité du pipeline de données.
+        les causes, les régions touchées, l’historique et la qualité du pipeline de données.
     </div>
     <div class="muted" style="margin-top:0.8rem;">
         Dernière mise à jour observée : <strong>{updated_at if updated_at is not None else "Non disponible"}</strong>
@@ -673,13 +684,14 @@ m6.metric("Causes connues", format_pct(known_cause))
 
 
 # =============================================================================
-# Tabs
+# Onglets
 # =============================================================================
 
-tab_overview, tab_map, tab_trends, tab_geo, tab_causes, tab_watch, tab_quality, tab_data = st.tabs(
+tab_overview, tab_active_map, tab_history_map, tab_trends, tab_geo, tab_causes, tab_watch, tab_quality, tab_data = st.tabs(
     [
         "Vue d’ensemble",
-        "Carte interactive",
+        "Carte active",
+        "Carte historique",
         "Tendances",
         "Géographie",
         "Causes",
@@ -695,120 +707,119 @@ tab_overview, tab_map, tab_trends, tab_geo, tab_causes, tab_watch, tab_quality, 
 # =============================================================================
 
 with tab_overview:
-    section(
-        "Vue d’ensemble opérationnelle",
-        "Une synthèse rapide des pannes actives, des régions touchées et des principales zones à surveiller.",
-    )
+    st.header("Vue d’ensemble opérationnelle")
+    st.caption("Synthèse rapide des pannes actives, des régions touchées et des principales zones à surveiller.")
 
     left, right = st.columns([1.45, 1])
 
     with left:
-        st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-        st.subheader("Répartition des clients affectés par région")
+        with st.container(border=True):
+            st.subheader("Répartition des clients affectés par région")
 
-        if "region_name" in filtered.columns and "customers_affected" in filtered.columns and not filtered.empty:
-            region = (
-                filtered.groupby("region_name", as_index=False)
-                .agg(
-                    clients_affectes=("customers_affected", "sum"),
-                    pannes=("outage_id", "nunique"),
+            if "region_name" in filtered.columns and "customers_affected" in filtered.columns and not filtered.empty:
+                region = (
+                    filtered.groupby("region_name", as_index=False)
+                    .agg(
+                        clients_affectes=("customers_affected", "sum"),
+                        pannes=("outage_id", "nunique"),
+                    )
+                    .sort_values("clients_affectes", ascending=True)
                 )
-                .sort_values("clients_affectes", ascending=True)
-            )
 
-            fig = px.bar(
-                region,
-                x="clients_affectes",
-                y="region_name",
-                orientation="h",
-                text="clients_affectes",
-                title="Régions les plus touchées",
-                labels={
-                    "clients_affectes": "Clients affectés",
-                    "region_name": "Région",
-                },
-            )
-            fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside", cliponaxis=False)
-            fig = apply_common_layout(fig, height=430)
-            st.plotly_chart(fig, width="stretch")
-        else:
-            st.info("Aucune donnée régionale selon les filtres.")
-        st.markdown("</div>", unsafe_allow_html=True)
+                fig = px.bar(
+                    region,
+                    x="clients_affectes",
+                    y="region_name",
+                    orientation="h",
+                    text="clients_affectes",
+                    title="Régions les plus touchées",
+                    labels={
+                        "clients_affectes": "Clients affectés",
+                        "region_name": "Région",
+                    },
+                )
+                fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside", cliponaxis=False)
+                fig = apply_common_layout(fig, height=430)
+                st.plotly_chart(fig, width="stretch")
+            else:
+                st.info("Aucune donnée régionale selon les filtres.")
 
     with right:
-        st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-        st.subheader("Top municipalités")
+        with st.container(border=True):
+            st.subheader("Top municipalités")
 
-        if "municipality_label" in filtered.columns and "customers_affected" in filtered.columns and not filtered.empty:
-            top_mun = (
-                filtered.groupby(["municipality_label", "region_name"], as_index=False, dropna=False)
-                .agg(
-                    clients_affectes=("customers_affected", "sum"),
-                    pannes=("outage_id", "nunique"),
+            if "municipality_label" in filtered.columns and "customers_affected" in filtered.columns and not filtered.empty:
+                top_mun = (
+                    filtered.groupby(["municipality_label", "region_name"], as_index=False, dropna=False)
+                    .agg(
+                        clients_affectes=("customers_affected", "sum"),
+                        pannes=("outage_id", "nunique"),
+                    )
+                    .sort_values("clients_affectes", ascending=False)
+                    .head(10)
                 )
-                .sort_values("clients_affectes", ascending=False)
-                .head(10)
-            )
 
-            fig = px.bar(
-                top_mun.sort_values("clients_affectes"),
-                x="clients_affectes",
-                y="municipality_label",
-                orientation="h",
-                text="clients_affectes",
-                hover_data=["region_name", "pannes"],
-                title="Municipalités par clients affectés",
-                labels={
-                    "clients_affectes": "Clients affectés",
-                    "municipality_label": "Municipalité",
-                    "region_name": "Région",
-                    "pannes": "Pannes",
-                },
-            )
-            fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside", cliponaxis=False)
-            fig = apply_common_layout(fig, height=430)
-            st.plotly_chart(fig, width="stretch")
-        else:
-            st.info("Aucune municipalité selon les filtres.")
-        st.markdown("</div>", unsafe_allow_html=True)
+                fig = px.bar(
+                    top_mun.sort_values("clients_affectes"),
+                    x="clients_affectes",
+                    y="municipality_label",
+                    orientation="h",
+                    text="clients_affectes",
+                    hover_data=["region_name", "pannes"],
+                    title="Municipalités par clients affectés",
+                    labels={
+                        "clients_affectes": "Clients affectés",
+                        "municipality_label": "Municipalité",
+                        "region_name": "Région",
+                        "pannes": "Pannes",
+                    },
+                )
+                fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside", cliponaxis=False)
+                fig = apply_common_layout(fig, height=430)
+                st.plotly_chart(fig, width="stretch")
+            else:
+                st.info("Aucune municipalité selon les filtres.")
 
-    st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-    st.subheader("Pannes actives prioritaires")
+    with st.container(border=True):
+        st.subheader("Pannes actives prioritaires")
 
-    priority_cols = [
-        "outage_id",
-        "customers_affected",
-        "municipality_label",
-        "region_name",
-        "mrc_name",
-        "status_fr",
-        "analysis_cause_label_fr",
-        "active_capture_at",
-        "first_capture_at",
-        "observed_duration_hours",
-        "estimated_restore",
-    ]
+        priority_cols = [
+            "outage_id",
+            "customers_affected",
+            "municipality_label",
+            "region_name",
+            "mrc_name",
+            "status_fr",
+            "analysis_cause_label_fr",
+            "active_capture_at",
+            "first_capture_at",
+            "observed_duration_hours",
+            "estimated_restore",
+        ]
 
-    priority = filtered.sort_values("customers_affected", ascending=False) if "customers_affected" in filtered else filtered
-    show_table(priority.head(15), priority_cols, height=420)
-    st.markdown("</div>", unsafe_allow_html=True)
+        priority = filtered.sort_values("customers_affected", ascending=False) if "customers_affected" in filtered else filtered
+        show_table(priority.head(15), priority_cols, height=420)
 
 
 # =============================================================================
-# Carte
+# Carte active
 # =============================================================================
 
-with tab_map:
-    section(
-        "Carte interactive des pannes",
-        "Les points sont dimensionnés selon le nombre de clients affectés. Le survol affiche les informations opérationnelles.",
-    )
+with tab_active_map:
+    st.header("Carte active")
+    st.caption("Carte des pannes qui apparaissent dans la dernière fenêtre de capture du pipeline.")
 
     geo = get_geo(filtered)
 
     if geo.empty:
         st.warning("Aucune coordonnée valide disponible selon les filtres.")
     else:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Points affichés", format_int(len(geo)))
+        c2.metric("Pannes uniques", format_int(geo["outage_id"].nunique() if "outage_id" in geo else len(geo)))
+        c3.metric("Municipalités", format_int(geo["municipality_label"].nunique() if "municipality_label" in geo else 0))
+        c4.metric("Clients affectés", format_int(geo["customers_affected"].sum() if "customers_affected" in geo else 0))
+
         geo["taille"] = geo["customers_affected"].fillna(1).clip(lower=1)
 
         hover_cols = [
@@ -855,14 +866,288 @@ with tab_map:
 
 
 # =============================================================================
+# Carte historique
+# =============================================================================
+
+with tab_history_map:
+    st.header("Carte historique")
+    st.caption("Carte de toutes les pannes observées dans l’historique collecté, avec filtres par période et territoire.")
+
+    if history_all.empty:
+        st.warning("Le fichier historique brut est introuvable ou vide.")
+    elif "captured_at" not in history_all.columns:
+        st.error("La colonne `captured_at` est manquante dans l’historique brut.")
+    else:
+        history = get_geo(history_all)
+
+        if history.empty:
+            st.warning("Aucune observation historique avec coordonnées valides.")
+        else:
+            history = history.dropna(subset=["captured_at"]).copy()
+
+            min_date = history["captured_at"].min().date()
+            max_date = history["captured_at"].max().date()
+
+            f1, f2, f3 = st.columns([1.4, 1.2, 1])
+
+            with f1:
+                selected_dates = st.date_input(
+                    "Période historique",
+                    value=(min_date, max_date),
+                    min_value=min_date,
+                    max_value=max_date,
+                    key="history_dates",
+                )
+
+            with f2:
+                history_mode = st.selectbox(
+                    "Mode d’affichage",
+                    [
+                        "Dernière observation par panne",
+                        "Première observation par panne",
+                        "Toutes les observations",
+                    ],
+                    key="history_mode",
+                )
+
+            with f3:
+                max_points = st.slider(
+                    "Maximum de points",
+                    min_value=500,
+                    max_value=50000,
+                    value=8000,
+                    step=500,
+                    key="history_max_points",
+                )
+
+            if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
+                start_date, end_date = selected_dates
+                history = history[
+                    (history["captured_at"].dt.date >= start_date)
+                    & (history["captured_at"].dt.date <= end_date)
+                ]
+
+            f4, f5, f6 = st.columns(3)
+
+            with f4:
+                history_min_customers = st.number_input(
+                    "Clients affectés minimum",
+                    min_value=0,
+                    value=0,
+                    step=1,
+                    key="history_min_customers",
+                )
+
+            with f5:
+                history_include_unknown = st.toggle(
+                    "Inclure causes inconnues",
+                    value=True,
+                    key="history_include_unknown",
+                )
+
+            with f6:
+                history_major_only = st.toggle(
+                    "Pannes majeures seulement",
+                    value=False,
+                    key="history_major_only",
+                )
+
+            if "customers_affected" in history.columns:
+                history = history[history["customers_affected"].fillna(0) >= history_min_customers]
+
+                if history_major_only:
+                    history = history[history["customers_affected"].fillna(0) >= major_threshold]
+
+            if not history_include_unknown and "history_cause_label_fr" in history.columns:
+                history = history[history["history_cause_label_fr"] != "Inconnue"]
+
+            with st.expander("Filtres historiques avancés", expanded=False):
+                h1, h2, h3 = st.columns(3)
+
+                with h1:
+                    hist_regions = sorted(history["region_name"].dropna().astype(str).unique()) if "region_name" in history.columns else []
+                    selected_hist_regions = st.multiselect("Régions historiques", hist_regions)
+
+                with h2:
+                    hist_mrcs = sorted(history["mrc_name"].dropna().astype(str).unique()) if "mrc_name" in history.columns else []
+                    selected_hist_mrcs = st.multiselect("MRC historiques", hist_mrcs)
+
+                with h3:
+                    hist_muns = sorted(history["municipality_label"].dropna().astype(str).unique()) if "municipality_label" in history.columns else []
+                    selected_hist_muns = st.multiselect("Municipalités historiques", hist_muns)
+
+                h4, h5 = st.columns(2)
+
+                with h4:
+                    hist_causes = sorted(history["history_cause_label_fr"].dropna().astype(str).unique()) if "history_cause_label_fr" in history.columns else []
+                    selected_hist_causes = st.multiselect("Causes historiques", hist_causes)
+
+                with h5:
+                    hist_statuses = sorted(history["status_fr"].dropna().astype(str).unique()) if "status_fr" in history.columns else []
+                    selected_hist_statuses = st.multiselect("Statuts historiques", hist_statuses)
+
+            if "selected_hist_regions" in locals() and selected_hist_regions and "region_name" in history.columns:
+                history = history[history["region_name"].isin(selected_hist_regions)]
+
+            if "selected_hist_mrcs" in locals() and selected_hist_mrcs and "mrc_name" in history.columns:
+                history = history[history["mrc_name"].isin(selected_hist_mrcs)]
+
+            if "selected_hist_muns" in locals() and selected_hist_muns and "municipality_label" in history.columns:
+                history = history[history["municipality_label"].isin(selected_hist_muns)]
+
+            if "selected_hist_causes" in locals() and selected_hist_causes and "history_cause_label_fr" in history.columns:
+                history = history[history["history_cause_label_fr"].isin(selected_hist_causes)]
+
+            if "selected_hist_statuses" in locals() and selected_hist_statuses and "status_fr" in history.columns:
+                history = history[history["status_fr"].isin(selected_hist_statuses)]
+
+            if history.empty:
+                st.warning("Aucune observation historique ne correspond aux filtres.")
+            else:
+                if history_mode == "Dernière observation par panne":
+                    history_map = (
+                        history.sort_values("captured_at")
+                        .groupby("outage_id", as_index=False)
+                        .tail(1)
+                    )
+                elif history_mode == "Première observation par panne":
+                    history_map = (
+                        history.sort_values("captured_at")
+                        .groupby("outage_id", as_index=False)
+                        .head(1)
+                    )
+                else:
+                    history_map = history.copy()
+
+                if len(history_map) > max_points:
+                    history_map = (
+                        history_map.sort_values("customers_affected", ascending=False)
+                        .head(max_points)
+                        if "customers_affected" in history_map.columns
+                        else history_map.head(max_points)
+                    )
+
+                k1, k2, k3, k4, k5 = st.columns(5)
+                k1.metric("Points affichés", format_int(len(history_map)))
+                k2.metric("Pannes uniques", format_int(history_map["outage_id"].nunique() if "outage_id" in history_map else len(history_map)))
+                k3.metric("Municipalités", format_int(history_map["municipality_label"].nunique() if "municipality_label" in history_map else 0))
+                k4.metric("Régions", format_int(history_map["region_name"].nunique() if "region_name" in history_map else 0))
+                k5.metric("Clients max", format_int(history_map["customers_affected"].max() if "customers_affected" in history_map else 0))
+
+                history_map["taille"] = (
+                    history_map["customers_affected"].fillna(1).clip(lower=1)
+                    if "customers_affected" in history_map.columns
+                    else 1
+                )
+
+                hover_cols = [
+                    "outage_id",
+                    "customers_affected",
+                    "municipality_label",
+                    "mrc_name",
+                    "region_name",
+                    "status_fr",
+                    "history_cause_label_fr",
+                    "captured_at",
+                    "start_time",
+                    "estimated_restore",
+                ]
+                hover_cols = [col for col in hover_cols if col in history_map.columns]
+
+                fig = px.scatter_map(
+                    history_map,
+                    lat="lat",
+                    lon="lon",
+                    size="taille",
+                    color="history_cause_label_fr" if "history_cause_label_fr" in history_map.columns else None,
+                    hover_data=hover_cols,
+                    zoom=5,
+                    height=735,
+                    title="Carte historique des pannes observées",
+                    labels={
+                        "history_cause_label_fr": "Cause",
+                        "taille": "Clients affectés",
+                    },
+                )
+
+                fig.update_layout(
+                    template=PLOT_TEMPLATE,
+                    map_style="open-street-map",
+                    margin=dict(l=0, r=0, t=50, b=0),
+                    legend=dict(title=None, orientation="h", y=1.04, x=0),
+                )
+
+                st.plotly_chart(fig, width="stretch")
+
+                st.markdown(
+                    "<div class='insight'>L’historique contient plusieurs captures pour une même panne. "
+                    "Le mode « Toutes les observations » peut donc afficher plusieurs points pour le même événement.</div>",
+                    unsafe_allow_html=True,
+                )
+
+                with st.container(border=True):
+                    st.subheader("Sommaire historique selon les filtres")
+
+                    history_daily = (
+                        history.assign(date=history["captured_at"].dt.date)
+                        .groupby("date", as_index=False)
+                        .agg(
+                            pannes_uniques=("outage_id", "nunique"),
+                            observations=("outage_id", "count"),
+                            clients_max=("customers_affected", "max"),
+                            clients_moyens=("customers_affected", "mean"),
+                            municipalites=("municipality_label", "nunique"),
+                        )
+                    )
+
+                    history_daily["clients_moyens"] = history_daily["clients_moyens"].round(2)
+
+                    fig_daily = px.line(
+                        history_daily,
+                        x="date",
+                        y=["pannes_uniques", "clients_max", "municipalites"],
+                        markers=True,
+                        title="Évolution historique selon les filtres",
+                        labels={
+                            "date": "Date",
+                            "value": "Valeur",
+                            "variable": "Indicateur",
+                        },
+                    )
+                    fig_daily = apply_common_layout(fig_daily, height=430)
+                    st.plotly_chart(fig_daily, width="stretch")
+
+                    show_table(history_daily.sort_values("date", ascending=False), height=320)
+
+                with st.expander("Voir les observations historiques affichées", expanded=False):
+                    hist_cols = [
+                        "outage_id",
+                        "customers_affected",
+                        "municipality_label",
+                        "mrc_name",
+                        "region_name",
+                        "status_fr",
+                        "history_cause_label_fr",
+                        "captured_at",
+                        "start_time",
+                        "estimated_restore",
+                        "lon",
+                        "lat",
+                    ]
+                    show_table(
+                        history_map.sort_values("captured_at", ascending=False),
+                        hist_cols,
+                        height=520,
+                    )
+
+
+# =============================================================================
 # Tendances
 # =============================================================================
 
 with tab_trends:
-    section(
-        "Tendances temporelles",
-        "Suivi quotidien de l’intensité des pannes, des clients affectés et des nouvelles pannes détectées.",
-    )
+    st.header("Tendances temporelles")
+    st.caption("Suivi quotidien de l’intensité des pannes, des clients affectés et des nouvelles pannes détectées.")
 
     daily_view = daily.copy()
     if "date" in daily_view.columns:
@@ -879,6 +1164,7 @@ with tab_trends:
             value=(min_date, max_date),
             min_value=min_date,
             max_value=max_date,
+            key="trend_dates",
         )
 
         if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
@@ -891,81 +1177,78 @@ with tab_trends:
         c1, c2 = st.columns([1.5, 1])
 
         with c1:
-            st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-            st.subheader("Clients affectés et pannes actives")
+            with st.container(border=True):
+                st.subheader("Clients affectés et pannes actives")
 
-            fig = go.Figure()
+                fig = go.Figure()
 
-            if "max_customers_affected" in daily_view.columns:
-                fig.add_trace(
-                    go.Scatter(
-                        x=daily_view["date"],
-                        y=daily_view["max_customers_affected"],
-                        mode="lines+markers",
-                        name="Clients affectés max",
-                        hovertemplate="%{x|%Y-%m-%d}<br>Clients: %{y:,.0f}<extra></extra>",
+                if "max_customers_affected" in daily_view.columns:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=daily_view["date"],
+                            y=daily_view["max_customers_affected"],
+                            mode="lines+markers",
+                            name="Clients affectés max",
+                            hovertemplate="%{x|%Y-%m-%d}<br>Clients: %{y:,.0f}<extra></extra>",
+                        )
                     )
-                )
 
-            if "max_active_outages_estimate" in daily_view.columns:
-                fig.add_trace(
-                    go.Scatter(
-                        x=daily_view["date"],
-                        y=daily_view["max_active_outages_estimate"],
-                        mode="lines+markers",
-                        name="Pannes actives max",
-                        yaxis="y2",
-                        hovertemplate="%{x|%Y-%m-%d}<br>Pannes: %{y:,.0f}<extra></extra>",
+                if "max_active_outages_estimate" in daily_view.columns:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=daily_view["date"],
+                            y=daily_view["max_active_outages_estimate"],
+                            mode="lines+markers",
+                            name="Pannes actives max",
+                            yaxis="y2",
+                            hovertemplate="%{x|%Y-%m-%d}<br>Pannes: %{y:,.0f}<extra></extra>",
+                        )
                     )
-                )
 
-            fig.update_layout(
-                title="Évolution quotidienne",
-                yaxis=dict(title="Clients affectés"),
-                yaxis2=dict(
-                    title="Pannes actives",
-                    overlaying="y",
-                    side="right",
-                    showgrid=False,
-                ),
-            )
-            fig = apply_common_layout(fig, height=460)
-            st.plotly_chart(fig, width="stretch")
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        with c2:
-            st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-            st.subheader("Nouvelles pannes détectées")
-
-            if "new_outages_detected" in daily_view.columns:
-                fig = px.area(
-                    daily_view,
-                    x="date",
-                    y="new_outages_detected",
-                    title="Volume quotidien de nouvelles pannes",
-                    labels={
-                        "date": "Date",
-                        "new_outages_detected": "Nouvelles pannes",
-                    },
+                fig.update_layout(
+                    title="Évolution quotidienne",
+                    yaxis=dict(title="Clients affectés"),
+                    yaxis2=dict(
+                        title="Pannes actives",
+                        overlaying="y",
+                        side="right",
+                        showgrid=False,
+                    ),
                 )
                 fig = apply_common_layout(fig, height=460)
                 st.plotly_chart(fig, width="stretch")
-            st.markdown("</div>", unsafe_allow_html=True)
 
-        st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-        st.subheader("Sommaire quotidien")
+        with c2:
+            with st.container(border=True):
+                st.subheader("Nouvelles pannes détectées")
 
-        daily_cols = [
-            "date",
-            "snapshots_count",
-            "max_active_outages_estimate",
-            "max_customers_affected",
-            "new_outages_detected",
-            "max_municipalities_affected",
-            "max_major_outages",
-        ]
-        show_table(daily_view.sort_values("date", ascending=False), daily_cols, height=440)
-        st.markdown("</div>", unsafe_allow_html=True)
+                if "new_outages_detected" in daily_view.columns:
+                    fig = px.area(
+                        daily_view,
+                        x="date",
+                        y="new_outages_detected",
+                        title="Volume quotidien de nouvelles pannes",
+                        labels={
+                            "date": "Date",
+                            "new_outages_detected": "Nouvelles pannes",
+                        },
+                    )
+                    fig = apply_common_layout(fig, height=460)
+                    st.plotly_chart(fig, width="stretch")
+
+        with st.container(border=True):
+            st.subheader("Sommaire quotidien")
+
+            daily_cols = [
+                "date",
+                "snapshots_count",
+                "max_active_outages_estimate",
+                "max_customers_affected",
+                "new_outages_detected",
+                "max_municipalities_affected",
+                "max_major_outages",
+            ]
+            show_table(daily_view.sort_values("date", ascending=False), daily_cols, height=440)
 
 
 # =============================================================================
@@ -973,102 +1256,95 @@ with tab_trends:
 # =============================================================================
 
 with tab_geo:
-    section(
-        "Analyse géographique",
-        "Lecture territoriale des pannes par région, MRC et municipalité.",
-    )
+    st.header("Analyse géographique")
+    st.caption("Lecture territoriale des pannes par région, MRC et municipalité.")
 
     g1, g2 = st.columns(2)
 
     with g1:
-        st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-        st.subheader("Part des clients affectés par région")
+        with st.container(border=True):
+            st.subheader("Part des clients affectés par région")
 
-        if "region_name" in filtered.columns and "customers_affected" in filtered.columns and not filtered.empty:
-            region = (
-                filtered.groupby("region_name", as_index=False)
-                .agg(clients_affectes=("customers_affected", "sum"))
-                .sort_values("clients_affectes", ascending=False)
-            )
+            if "region_name" in filtered.columns and "customers_affected" in filtered.columns and not filtered.empty:
+                region = (
+                    filtered.groupby("region_name", as_index=False)
+                    .agg(clients_affectes=("customers_affected", "sum"))
+                    .sort_values("clients_affectes", ascending=False)
+                )
 
-            fig = px.treemap(
-                region,
-                path=["region_name"],
-                values="clients_affectes",
-                title="Poids relatif des régions touchées",
-                labels={"clients_affectes": "Clients affectés"},
-            )
-            fig = apply_common_layout(fig, height=480)
-            st.plotly_chart(fig, width="stretch")
-        st.markdown("</div>", unsafe_allow_html=True)
+                fig = px.treemap(
+                    region,
+                    path=["region_name"],
+                    values="clients_affectes",
+                    title="Poids relatif des régions touchées",
+                    labels={"clients_affectes": "Clients affectés"},
+                )
+                fig = apply_common_layout(fig, height=480)
+                st.plotly_chart(fig, width="stretch")
 
     with g2:
-        st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-        st.subheader("Top MRC")
+        with st.container(border=True):
+            st.subheader("Top MRC")
 
-        if "mrc_name" in filtered.columns and "customers_affected" in filtered.columns and not filtered.empty:
-            mrc = (
-                filtered.groupby(["mrc_name", "region_name"], as_index=False, dropna=False)
+            if "mrc_name" in filtered.columns and "customers_affected" in filtered.columns and not filtered.empty:
+                mrc = (
+                    filtered.groupby(["mrc_name", "region_name"], as_index=False, dropna=False)
+                    .agg(
+                        clients_affectes=("customers_affected", "sum"),
+                        pannes=("outage_id", "nunique"),
+                        municipalites=("municipality_label", "nunique"),
+                    )
+                    .sort_values("clients_affectes", ascending=False)
+                    .head(15)
+                )
+
+                fig = px.scatter(
+                    mrc,
+                    x="pannes",
+                    y="clients_affectes",
+                    size="municipalites",
+                    color="region_name",
+                    hover_name="mrc_name",
+                    title="MRC : volume de pannes vs clients affectés",
+                    labels={
+                        "pannes": "Pannes actives",
+                        "clients_affectes": "Clients affectés",
+                        "municipalites": "Municipalités",
+                        "region_name": "Région",
+                    },
+                )
+                fig = apply_common_layout(fig, height=480)
+                st.plotly_chart(fig, width="stretch")
+
+    with st.container(border=True):
+        st.subheader("Classement territorial")
+
+        if "municipality_label" in filtered.columns and "customers_affected" in filtered.columns:
+            geo_summary = (
+                filtered.groupby(["municipality_label", "mrc_name", "region_name"], as_index=False, dropna=False)
                 .agg(
-                    clients_affectes=("customers_affected", "sum"),
                     pannes=("outage_id", "nunique"),
-                    municipalites=("municipality_label", "nunique"),
+                    clients_affectes=("customers_affected", "sum"),
+                    clients_max=("customers_affected", "max"),
                 )
                 .sort_values("clients_affectes", ascending=False)
-                .head(15)
             )
 
-            fig = px.scatter(
-                mrc,
-                x="pannes",
-                y="clients_affectes",
-                size="municipalites",
-                color="region_name",
-                hover_name="mrc_name",
-                title="MRC : volume de pannes vs clients affectés",
-                labels={
-                    "pannes": "Pannes actives",
-                    "clients_affectes": "Clients affectés",
-                    "municipalites": "Municipalités",
-                    "region_name": "Région",
-                },
+            st.dataframe(
+                geo_summary.rename(
+                    columns={
+                        "municipality_label": "Municipalité",
+                        "mrc_name": "MRC",
+                        "region_name": "Région",
+                        "pannes": "Pannes",
+                        "clients_affectes": "Clients affectés",
+                        "clients_max": "Clients affectés max",
+                    }
+                ),
+                width="stretch",
+                height=520,
+                hide_index=True,
             )
-            fig = apply_common_layout(fig, height=480)
-            st.plotly_chart(fig, width="stretch")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-    st.subheader("Classement territorial")
-
-    geo_summary = pd.DataFrame()
-    if "municipality_label" in filtered.columns and "customers_affected" in filtered.columns:
-        geo_summary = (
-            filtered.groupby(["municipality_label", "mrc_name", "region_name"], as_index=False, dropna=False)
-            .agg(
-                pannes=("outage_id", "nunique"),
-                clients_affectes=("customers_affected", "sum"),
-                clients_max=("customers_affected", "max"),
-            )
-            .sort_values("clients_affectes", ascending=False)
-        )
-
-    if not geo_summary.empty:
-        st.dataframe(
-            geo_summary.rename(
-                columns={
-                    "municipality_label": "Municipalité",
-                    "mrc_name": "MRC",
-                    "region_name": "Région",
-                    "pannes": "Pannes",
-                    "clients_affectes": "Clients affectés",
-                    "clients_max": "Clients affectés max",
-                }
-            ),
-            width="stretch",
-            height=520,
-            hide_index=True,
-        )
-    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # =============================================================================
@@ -1076,69 +1352,65 @@ with tab_geo:
 # =============================================================================
 
 with tab_causes:
-    section(
-        "Analyse des causes",
-        "Distinction entre les causes connues et inconnues, utile pour comprendre les limites de la source.",
-    )
+    st.header("Analyse des causes")
+    st.caption("Distinction entre les causes connues et inconnues, utile pour comprendre les limites de la source.")
 
     cause_df = latest.copy()
 
     c1, c2 = st.columns([1.1, 1])
 
     with c1:
-        st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-        st.subheader("Distribution des causes")
+        with st.container(border=True):
+            st.subheader("Distribution des causes")
 
-        if "analysis_cause_label_fr" in cause_df.columns:
-            cause_summary = (
-                cause_df["analysis_cause_label_fr"]
-                .fillna("Inconnue")
-                .value_counts()
-                .rename_axis("cause")
-                .reset_index(name="pannes")
-            )
-
-            fig = px.bar(
-                cause_summary,
-                x="pannes",
-                y="cause",
-                orientation="h",
-                text="pannes",
-                title="Nombre de pannes par cause",
-                labels={"pannes": "Pannes", "cause": "Cause"},
-            )
-            fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside", cliponaxis=False)
-            fig.update_layout(yaxis={"categoryorder": "total ascending"})
-            fig = apply_common_layout(fig, height=500)
-            st.plotly_chart(fig, width="stretch")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with c2:
-        st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-        st.subheader("Causes connues seulement")
-
-        if "analysis_cause_label_fr" in cause_df.columns:
-            known = cause_df[cause_df["analysis_cause_label_fr"] != "Inconnue"]
-            known_summary = (
-                known["analysis_cause_label_fr"]
-                .value_counts()
-                .rename_axis("cause")
-                .reset_index(name="pannes")
-            )
-
-            if not known_summary.empty:
-                fig = px.pie(
-                    known_summary,
-                    names="cause",
-                    values="pannes",
-                    hole=0.58,
-                    title="Répartition des causes connues",
+            if "analysis_cause_label_fr" in cause_df.columns:
+                cause_summary = (
+                    cause_df["analysis_cause_label_fr"]
+                    .fillna("Inconnue")
+                    .value_counts()
+                    .rename_axis("cause")
+                    .reset_index(name="pannes")
                 )
+
+                fig = px.bar(
+                    cause_summary,
+                    x="pannes",
+                    y="cause",
+                    orientation="h",
+                    text="pannes",
+                    title="Nombre de pannes par cause",
+                    labels={"pannes": "Pannes", "cause": "Cause"},
+                )
+                fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside", cliponaxis=False)
+                fig.update_layout(yaxis={"categoryorder": "total ascending"})
                 fig = apply_common_layout(fig, height=500)
                 st.plotly_chart(fig, width="stretch")
-            else:
-                st.info("Aucune cause connue disponible.")
-        st.markdown("</div>", unsafe_allow_html=True)
+
+    with c2:
+        with st.container(border=True):
+            st.subheader("Causes connues seulement")
+
+            if "analysis_cause_label_fr" in cause_df.columns:
+                known = cause_df[cause_df["analysis_cause_label_fr"] != "Inconnue"]
+                known_summary = (
+                    known["analysis_cause_label_fr"]
+                    .value_counts()
+                    .rename_axis("cause")
+                    .reset_index(name="pannes")
+                )
+
+                if not known_summary.empty:
+                    fig = px.pie(
+                        known_summary,
+                        names="cause",
+                        values="pannes",
+                        hole=0.58,
+                        title="Répartition des causes connues",
+                    )
+                    fig = apply_common_layout(fig, height=500)
+                    st.plotly_chart(fig, width="stretch")
+                else:
+                    st.info("Aucune cause connue disponible.")
 
     st.markdown(
         "<div class='insight'>Une cause inconnue ne signifie pas une erreur du pipeline. "
@@ -1152,80 +1424,75 @@ with tab_causes:
 # =============================================================================
 
 with tab_watch:
-    section(
-        "Pannes à surveiller",
-        "Pannes majeures, longues ou récemment détectées qui méritent une attention particulière.",
-    )
+    st.header("Pannes à surveiller")
+    st.caption("Pannes majeures, longues ou récemment détectées qui méritent une attention particulière.")
 
     w1, w2 = st.columns(2)
 
     with w1:
-        st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-        st.subheader("Pannes majeures actives")
+        with st.container(border=True):
+            st.subheader("Pannes majeures actives")
 
-        major = filtered.copy()
-        if "customers_affected" in major:
-            major = major[major["customers_affected"] >= major_threshold].sort_values(
+            major = filtered.copy()
+            if "customers_affected" in major:
+                major = major[major["customers_affected"] >= major_threshold].sort_values(
+                    "customers_affected",
+                    ascending=False,
+                )
+
+            watch_cols = [
+                "outage_id",
                 "customers_affected",
-                ascending=False,
-            )
+                "municipality_label",
+                "region_name",
+                "status_fr",
+                "analysis_cause_label_fr",
+                "active_capture_at",
+            ]
 
-        watch_cols = [
-            "outage_id",
-            "customers_affected",
-            "municipality_label",
-            "region_name",
-            "status_fr",
-            "analysis_cause_label_fr",
-            "active_capture_at",
-        ]
-
-        show_table(major.head(15), watch_cols, height=460)
-        st.markdown("</div>", unsafe_allow_html=True)
+            show_table(major.head(15), watch_cols, height=460)
 
     with w2:
-        st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-        st.subheader("Pannes observées le plus longtemps")
+        with st.container(border=True):
+            st.subheader("Pannes observées le plus longtemps")
 
-        long = filtered.copy()
-        if "observed_duration_hours" in long:
-            long = long.sort_values("observed_duration_hours", ascending=False)
+            long = filtered.copy()
+            if "observed_duration_hours" in long:
+                long = long.sort_values("observed_duration_hours", ascending=False)
 
-        long_cols = [
+            long_cols = [
+                "outage_id",
+                "customers_affected",
+                "municipality_label",
+                "region_name",
+                "observed_duration_hours",
+                "capture_count",
+                "analysis_cause_label_fr",
+                "first_capture_at",
+            ]
+
+            show_table(long.head(15), long_cols, height=460)
+
+    with st.container(border=True):
+        st.subheader("Dernières pannes détectées")
+
+        recent = latest.copy()
+        if "first_capture_at" in recent:
+            recent = recent.sort_values("first_capture_at", ascending=False)
+
+        recent_cols = [
             "outage_id",
             "customers_affected",
             "municipality_label",
             "region_name",
-            "observed_duration_hours",
-            "capture_count",
+            "mrc_name",
+            "status_fr",
             "analysis_cause_label_fr",
             "first_capture_at",
+            "estimated_restore",
         ]
 
-        show_table(long.head(15), long_cols, height=460)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-    st.subheader("Dernières pannes détectées")
-
-    recent = latest.copy()
-    if "first_capture_at" in recent:
-        recent = recent.sort_values("first_capture_at", ascending=False)
-
-    recent_cols = [
-        "outage_id",
-        "customers_affected",
-        "municipality_label",
-        "region_name",
-        "mrc_name",
-        "status_fr",
-        "analysis_cause_label_fr",
-        "first_capture_at",
-        "estimated_restore",
-    ]
-
-    show_table(recent.head(25), recent_cols, height=500)
-    st.markdown("</div>", unsafe_allow_html=True)
+        show_table(recent.head(25), recent_cols, height=500)
 
 
 # =============================================================================
@@ -1233,10 +1500,8 @@ with tab_watch:
 # =============================================================================
 
 with tab_quality:
-    section(
-        "Qualité des données",
-        "Contrôles automatiques sur les identifiants, coordonnées, doublons, dates et causes inconnues.",
-    )
+    st.header("Qualité des données")
+    st.caption("Contrôles automatiques sur les identifiants, coordonnées, doublons, dates et causes inconnues.")
 
     if quality.empty:
         st.warning("Aucun rapport qualité disponible.")
@@ -1255,39 +1520,37 @@ with tab_quality:
         left, right = st.columns([1.2, 1])
 
         with left:
-            st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-            st.subheader("Rapport qualité")
-            q_cols = [
-                "check_name_fr",
-                "severity_fr",
-                "status_quality_fr",
-                "rows_affected",
-                "failed_rate_pct",
-                "description",
-            ]
-            show_table(quality, q_cols, height=520)
-            st.markdown("</div>", unsafe_allow_html=True)
+            with st.container(border=True):
+                st.subheader("Rapport qualité")
+                q_cols = [
+                    "check_name_fr",
+                    "severity_fr",
+                    "status_quality_fr",
+                    "rows_affected",
+                    "failed_rate_pct",
+                    "description",
+                ]
+                show_table(quality, q_cols, height=520)
 
         with right:
-            st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-            st.subheader("Lignes affectées")
+            with st.container(border=True):
+                st.subheader("Lignes affectées")
 
-            if "rows_affected" in quality and "check_name_fr" in quality:
-                qchart = quality.sort_values("rows_affected", ascending=True)
-                fig = px.bar(
-                    qchart,
-                    x="rows_affected",
-                    y="check_name_fr",
-                    orientation="h",
-                    title="Contrôles qualité",
-                    labels={
-                        "rows_affected": "Lignes affectées",
-                        "check_name_fr": "Contrôle",
-                    },
-                )
-                fig = apply_common_layout(fig, height=520)
-                st.plotly_chart(fig, width="stretch")
-            st.markdown("</div>", unsafe_allow_html=True)
+                if "rows_affected" in quality and "check_name_fr" in quality:
+                    qchart = quality.sort_values("rows_affected", ascending=True)
+                    fig = px.bar(
+                        qchart,
+                        x="rows_affected",
+                        y="check_name_fr",
+                        orientation="h",
+                        title="Contrôles qualité",
+                        labels={
+                            "rows_affected": "Lignes affectées",
+                            "check_name_fr": "Contrôle",
+                        },
+                    )
+                    fig = apply_common_layout(fig, height=520)
+                    st.plotly_chart(fig, width="stretch")
 
 
 # =============================================================================
@@ -1295,10 +1558,8 @@ with tab_quality:
 # =============================================================================
 
 with tab_data:
-    section(
-        "Tables analytiques",
-        "Accès contrôlé aux tables principales du pipeline.",
-    )
+    st.header("Tables analytiques")
+    st.caption("Accès contrôlé aux tables principales du pipeline.")
 
     table_name = st.selectbox(
         "Table à afficher",
@@ -1308,7 +1569,7 @@ with tab_data:
             "Dernière observation par panne",
             "Sommaire quotidien",
             "Rapport qualité",
-            "Historique brut, échantillon",
+            "Historique brut enrichi, échantillon",
         ],
     )
 
@@ -1333,5 +1594,5 @@ with tab_data:
         make_download(quality, "Télécharger le rapport qualité", "rapport_qualite.csv")
 
     else:
-        show_table(raw.head(5000), height=620)
-        make_download(raw, "Télécharger l’historique brut", "historique_pannes.csv")
+        show_table(history_all.head(5000), height=620)
+        make_download(history_all, "Télécharger l’historique brut enrichi", "historique_pannes_enrichi.csv")
