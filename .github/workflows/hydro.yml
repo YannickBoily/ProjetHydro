@@ -24,13 +24,25 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Fetch outage data
+      - name: Fetch raw outage data
         run: python scripts/fetch_outages.py
 
-      - name: Commit updated raw data
+      - name: Build DuckDB warehouse with SQL
+        run: python scripts/build_warehouse.py
+
+      - name: Export processed analytical tables
+        run: python scripts/export_tables.py
+
+      - name: Commit updated data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/raw/hydroquebec_history.csv
-          git commit -m "Update raw outage history" || echo "No changes to commit"
+          git add data/processed/latest_outages.csv
+          git add data/processed/active_outages.csv
+          git add data/processed/daily_summary.csv
+          git add data/processed/data_quality_report.csv
+          git add sql/
+          git add scripts/
+          git commit -m "Update outage data pipeline outputs" || echo "No changes to commit"
           git push

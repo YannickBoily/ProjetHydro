@@ -52,7 +52,6 @@ def update_outages_history(output_file="data/raw/hydroquebec_history.csv"):
         data = resp.json()
 
         rows = []
-
         for p in data.get("pannes", []):
 
             # Skip lignes suspectes
