@@ -172,7 +172,7 @@ def load_csv(path: Path) -> pd.DataFrame:
 
     for col in date_columns:
         if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce")
+            df[col] = pd.to_datetime(df[col], errors="coerce", utc=True).dt.tz_convert(None)
 
     numeric_columns = [
         "customers_affected",
@@ -362,6 +362,51 @@ def format_number(value) -> str:
     return f"{int(value):,}".replace(",", " ")
 
 
+
+def ensure_coordinate_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    S'assure que les colonnes de coordonnées s'appellent bien lat/lon.
+
+    Certaines étapes ou exports peuvent produire des noms traduits comme
+    Latitude/Longitude. Cette fonction rend le dashboard plus robuste.
+    """
+    if df.empty:
+        return df
+
+    df = df.copy()
+
+    rename_candidates = {
+        "Latitude": "lat",
+        "latitude": "lat",
+        "LAT": "lat",
+        "Longitude": "lon",
+        "longitude": "lon",
+        "LON": "lon",
+        "lng": "lon",
+        "Lng": "lon",
+    }
+
+    for old_name, new_name in rename_candidates.items():
+        if old_name in df.columns and new_name not in df.columns:
+            df = df.rename(columns={old_name: new_name})
+
+    for col in ["lat", "lon"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    return df
+
+
+def get_geo_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Retourne seulement les lignes avec coordonnées valides, ou un dataframe vide."""
+    df = ensure_coordinate_columns(df)
+
+    if "lat" not in df.columns or "lon" not in df.columns:
+        return pd.DataFrame()
+
+    return df.dropna(subset=["lat", "lon"]).copy()
+
+
 def bool_rate(series: pd.Series) -> float:
     """Calcule le pourcentage de valeurs vraies."""
     if series.empty:
@@ -448,11 +493,11 @@ def make_download_button(df: pd.DataFrame, label: str, file_name: str) -> None:
 # Chargement des données
 # -------------------------------------------------------------------
 
-active = add_display_columns(load_csv(ACTIVE_FILE))
-latest = add_display_columns(load_csv(LATEST_FILE))
+active = ensure_coordinate_columns(add_display_columns(load_csv(ACTIVE_FILE)))
+latest = ensure_coordinate_columns(add_display_columns(load_csv(LATEST_FILE)))
 daily = load_csv(DAILY_FILE)
 quality = load_csv(QUALITY_FILE)
-raw_history = add_display_columns(load_csv(RAW_FILE))
+raw_history = ensure_coordinate_columns(add_display_columns(load_csv(RAW_FILE)))
 
 if not quality.empty:
     if "check_name" in quality.columns:
@@ -618,9 +663,12 @@ with tab_summary:
 
     with left:
         st.subheader("Carte rapide des pannes actives")
-        geo = active_filtered.dropna(subset=["lat", "lon"]).copy()
+        geo = get_geo_dataframe(active_filtered)
         if geo.empty:
-            st.warning("Aucune panne active avec coordonnées valides selon les filtres actuels.")
+            if "lat" not in active_filtered.columns or "lon" not in active_filtered.columns:
+                st.warning("Les colonnes de coordonnées `lat` et `lon` sont absentes de `active_outages.csv`. Relance le pipeline SQL/export.")
+            else:
+                st.warning("Aucune panne active avec coordonnées valides selon les filtres actuels.")
         else:
             st.map(geo[["lat", "lon"]])
 
@@ -674,10 +722,13 @@ with tab_summary:
 
 with tab_active_map:
     st.header("Carte interactive des pannes actives")
-    geo = active_filtered.dropna(subset=["lat", "lon"]).copy()
+    geo = get_geo_dataframe(active_filtered)
 
     if geo.empty:
-        st.warning("Aucune coordonnée valide disponible.")
+        if "lat" not in active_filtered.columns or "lon" not in active_filtered.columns:
+            st.warning("Les colonnes de coordonnées `lat` et `lon` sont absentes de `active_outages.csv`. Relance le pipeline SQL/export.")
+        else:
+            st.warning("Aucune coordonnée valide disponible.")
     else:
         geo["taille_carte"] = geo["customers_affected"].fillna(1).clip(lower=1) if "customers_affected" in geo.columns else 1
         hover_cols = [
@@ -730,7 +781,13 @@ with tab_history_map:
         if missing_required:
             st.error("Colonnes manquantes pour la carte historique : " + ", ".join(missing_required))
         else:
-            history = history.dropna(subset=["captured_at", "lat", "lon"])
+            history = get_geo_dataframe(history)
+
+            if "captured_at" not in history.columns:
+                st.error("La colonne `captured_at` est manquante dans l'historique.")
+                st.stop()
+
+            history = history.dropna(subset=["captured_at"])
 
             st.markdown(
                 """
