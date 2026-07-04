@@ -644,11 +644,6 @@ updated_at = latest_timestamp(active, latest)
 st.markdown(
     f"""
 <div class="hero">
-    <div>
-        <span class="pill">Portfolio Data / BI</span>
-        <span class="pill">Python · DuckDB · SQL · Streamlit</span>
-        <span class="pill">Géospatial</span>
-    </div>
     <div class="hero-title">⚡ Suivi automatisé des pannes électriques au Québec</div>
     <div class="hero-subtitle">
         Tableau de bord interactif pour analyser les pannes observées, les clients affectés,
