@@ -163,7 +163,7 @@ def rename_for_display(df: pd.DataFrame) -> pd.DataFrame:
     return df.rename(columns=DISPLAY_NAMES)
 
 
-def show_dataframe(df: pd.DataFrame, height: int | None = None) -> None:
+def show_dataframe(df: pd.DataFrame, height: int | str = "auto") -> None:
     """Display a dataframe with readable French column names."""
     st.dataframe(
         rename_for_display(df),
