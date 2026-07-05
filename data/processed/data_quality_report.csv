@@ -1,9 +1,9 @@
 check_name,severity,status,rows_affected,total_rows,failed_rate_pct,description,created_at
-duplicate_outage_id_captured_at,critical,pass,0,51980,0.0,Duplicate records for the same outage_id and captured_at.,2026-07-05 10:56:58.931182+00
-missing_captured_at,critical,pass,0,51980,0.0,Rows where captured_at is missing or invalid.,2026-07-05 10:56:58.931182+00
-missing_outage_id,critical,pass,0,51980,0.0,Rows where outage_id is missing.,2026-07-05 10:56:58.931182+00
-negative_customers_affected,critical,pass,0,51980,0.0,Rows where customers_affected is negative.,2026-07-05 10:56:58.931182+00
-captured_at_before_start_time,warning,pass,0,51980,0.0,Rows where captured_at is before start_time.,2026-07-05 10:56:58.931182+00
-estimated_restore_before_start_time,warning,pass,0,51980,0.0,Rows where estimated_restore is before start_time.,2026-07-05 10:56:58.931182+00
-invalid_coordinates,warning,pass,0,51980,0.0,Rows with coordinates outside approximate Quebec bounds.,2026-07-05 10:56:58.931182+00
-unknown_cause_rows,info,info,33486,51980,64.42,Rows where cause_label is unknown.,2026-07-05 10:56:58.931182+00
+duplicate_outage_id_captured_at,critical,pass,0,52028,0.0,Duplicate records for the same outage_id and captured_at.,2026-07-05 12:10:24.82806+00
+missing_captured_at,critical,pass,0,52028,0.0,Rows where captured_at is missing or invalid.,2026-07-05 12:10:24.82806+00
+missing_outage_id,critical,pass,0,52028,0.0,Rows where outage_id is missing.,2026-07-05 12:10:24.82806+00
+negative_customers_affected,critical,pass,0,52028,0.0,Rows where customers_affected is negative.,2026-07-05 12:10:24.82806+00
+captured_at_before_start_time,warning,pass,0,52028,0.0,Rows where captured_at is before start_time.,2026-07-05 12:10:24.82806+00
+estimated_restore_before_start_time,warning,pass,0,52028,0.0,Rows where estimated_restore is before start_time.,2026-07-05 12:10:24.82806+00
+invalid_coordinates,warning,pass,0,52028,0.0,Rows with coordinates outside approximate Quebec bounds.,2026-07-05 12:10:24.82806+00
+unknown_cause_rows,info,info,33528,52028,64.44,Rows where cause_label is unknown.,2026-07-05 12:10:24.82806+00
