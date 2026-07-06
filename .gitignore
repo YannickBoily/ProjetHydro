@@ -3,3 +3,19 @@ __pycache__/
 data/warehouse/*.duckdb
 data/geo/
 data/reference/
+
+# Historique brut local seulement
+data/raw/hydroquebec_history.csv
+
+# Warehouse généré
+data/warehouse/*.duckdb
+
+# Données géospatiales sources lourdes
+data/geo/
+
+# Secrets locaux Streamlit
+.streamlit/secrets.toml
+
+# Python cache
+__pycache__/
+*.pyc
