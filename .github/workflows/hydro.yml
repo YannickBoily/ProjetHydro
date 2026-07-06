@@ -16,7 +16,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
@@ -34,3 +34,9 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SUPABASE_DB_HOSTADDR: ${{ secrets.SUPABASE_DB_HOSTADDR }}
         run: python scripts/sync_to_supabase.py
+
+      - name: Refresh Supabase analytical tables
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_DB_HOSTADDR: ${{ secrets.SUPABASE_DB_HOSTADDR }}
+        run: python scripts/refresh_supabase_analytics.py
