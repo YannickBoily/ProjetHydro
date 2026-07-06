@@ -227,7 +227,7 @@ PLOT_TEMPLATE = "plotly_dark"
 # Fonctions utilitaires
 # =============================================================================
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_csv(path: Path) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
@@ -558,6 +558,9 @@ if active.empty or latest.empty or daily.empty:
 
 st.sidebar.markdown("## ⚡ Hydro-Québec")
 st.sidebar.caption("Dashboard BI des pannes électriques au Québec")
+if st.sidebar.button("Rafraîchir les données"):
+    st.cache_data.clear()
+    st.rerun()
 st.sidebar.divider()
 
 major_threshold = st.sidebar.number_input(
