@@ -5,3 +5,4 @@ streamlit
 plotly
 pytest
 psycopg2-binary
+sqlalchemy

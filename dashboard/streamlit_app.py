@@ -402,23 +402,13 @@ def load_supabase_query(query: str) -> pd.DataFrame:
 
 
 def get_supabase_history_days() -> int:
-    raw_value = get_config_value("SUPABASE_HISTORY_DAYS", "30")
+    raw_value = get_config_value("SUPABASE_HISTORY_DAYS", "180")
     try:
         days = int(raw_value)
     except (TypeError, ValueError):
-        days = 30
+        days = 180
 
     return max(days, 1)
-
-
-def get_supabase_history_rows_limit() -> int:
-    raw_value = get_config_value("SUPABASE_HISTORY_ROWS_LIMIT", "25000")
-    try:
-        rows_limit = int(raw_value)
-    except (TypeError, ValueError):
-        rows_limit = 25000
-
-    return max(rows_limit, 1000)
 
 
 @st.cache_data(show_spinner=False, ttl=300)
@@ -457,7 +447,6 @@ def load_supabase_latest() -> pd.DataFrame:
 @st.cache_data(show_spinner=False, ttl=300)
 def load_supabase_history() -> pd.DataFrame:
     days = get_supabase_history_days()
-    rows_limit = get_supabase_history_rows_limit()
 
     query = f"""
         WITH bounds AS (
@@ -493,8 +482,7 @@ def load_supabase_history() -> pd.DataFrame:
         CROSS JOIN bounds b
         WHERE r.captured_at IS NOT NULL
           AND r.captured_at >= b.max_captured_at - INTERVAL '{days} days'
-        ORDER BY r.captured_at DESC
-        LIMIT {rows_limit};
+        ORDER BY r.captured_at DESC;
     """
 
     return load_supabase_query(query)
@@ -640,9 +628,8 @@ def enrich_raw_history(raw_df: pd.DataFrame, latest_df: pd.DataFrame) -> pd.Data
 
 
 def prepare_display_table(df: pd.DataFrame, columns: list[str] | None = None) -> pd.DataFrame:
-    """Prepare a dataframe for safe Streamlit display."""
-    if df is None or df.empty:
-        return pd.DataFrame()
+    if df.empty:
+        return df.copy()
 
     out = df.copy()
 
@@ -669,65 +656,27 @@ def prepare_display_table(df: pd.DataFrame, columns: list[str] | None = None) ->
 
     out = out.rename(columns=COLUMN_LABELS)
 
-    # Streamlit's dataframe frontend can break when column names are duplicated,
-    # missing, non-string, or visually identical after renaming.
-    clean_columns = []
     seen = {}
-
-    for idx, col in enumerate(out.columns):
-        name = "" if col is None else str(col).strip()
-        if not name:
-            name = f"Colonne {idx + 1}"
-
-        if name not in seen:
-            seen[name] = 1
-            clean_columns.append(name)
+    unique_cols = []
+    for col in out.columns:
+        if col not in seen:
+            seen[col] = 1
+            unique_cols.append(col)
         else:
-            seen[name] += 1
-            clean_columns.append(f"{name} ({seen[name]})")
+            seen[col] += 1
+            unique_cols.append(f"{col} ({seen[col]})")
 
-    out.columns = clean_columns
-
-    # Reset index so Streamlit does not try to render a complex/pinned index column.
-    out = out.reset_index(drop=True)
-
+    out.columns = unique_cols
     return out
 
 
 def show_table(df: pd.DataFrame, columns: list[str] | None = None, height: int | str = "auto") -> None:
-    """Display a dataframe while avoiding Streamlit frontend grid crashes."""
-    display_df = prepare_display_table(df, columns)
-
-    if display_df.empty:
-        st.info("Aucune donnée à afficher selon les filtres actuels.")
-        return
-
-    # Very large interactive tables can make Streamlit Cloud slow.
-    max_display_rows = 1000
-
-    if len(display_df) > max_display_rows:
-        st.caption(
-            f"Affichage des {max_display_rows:,} premières lignes sur {len(display_df):,}. "
-            "Utilise le bouton de téléchargement pour obtenir le fichier complet."
-        )
-        display_df = display_df.head(max_display_rows)
-
-    try:
-        st.dataframe(
-            display_df,
-            width="stretch",
-            height=height,
-            hide_index=True,
-        )
-    except Exception:
-        st.warning(
-            "Le tableau interactif n'a pas pu être affiché. "
-            "Affichage d'une version simplifiée."
-        )
-        st.markdown(
-            display_df.head(200).to_html(index=False, escape=True),
-            unsafe_allow_html=True,
-        )
+    st.dataframe(
+        prepare_display_table(df, columns),
+        width="stretch",
+        height=height,
+        hide_index=True,
+    )
 
 
 def format_int(value) -> str:
@@ -795,9 +744,6 @@ def apply_common_layout(fig, height: int | None = None):
 
 
 def make_download(df: pd.DataFrame, label: str, filename: str):
-    if df is None or df.empty:
-        return
-
     csv = prepare_display_table(df).to_csv(index=False).encode("utf-8-sig")
     st.download_button(
         label=label,
@@ -894,13 +840,11 @@ def source_limit_summary(latest_df: pd.DataFrame, quality_df: pd.DataFrame) -> d
 DATA_SOURCE = "Supabase" if using_supabase() else "CSV"
 
 if using_supabase():
-    # Chargement rapide au démarrage : on ne charge pas l'historique brut ici.
-    # L'historique est chargé seulement si l'utilisateur active l'option dans la sidebar.
     active = add_display_columns(load_supabase_active())
     latest = add_display_columns(load_supabase_latest())
     daily = load_supabase_daily_summary()
     quality = load_supabase_quality_report()
-    history_all = pd.DataFrame()
+    history_all = add_display_columns(load_supabase_history())
 else:
     active = add_display_columns(load_csv(ACTIVE_FILE))
     latest = add_display_columns(load_csv(LATEST_FILE))
@@ -939,24 +883,8 @@ st.sidebar.markdown("## ⚡ Hydro-Québec")
 st.sidebar.caption("Dashboard BI des pannes électriques au Québec")
 st.sidebar.caption(f"Source de données : {DATA_SOURCE}")
 
-load_history_views = False
-
-if using_supabase():
-    load_history_views = st.sidebar.toggle(
-        "Charger les vues historiques",
-        value=False,
-        help=(
-            "Désactivé par défaut pour garder le dashboard rapide. "
-            "Active cette option seulement pour utiliser Retour dans le temps, Historique "
-            "ou télécharger l'historique."
-        ),
-    )
-
-    if load_history_views:
-        st.sidebar.info(
-            f"Historique chargé : derniers {get_supabase_history_days()} jours, "
-            f"maximum {get_supabase_history_rows_limit():,} lignes."
-        )
+if DATA_SOURCE == "Supabase":
+    st.sidebar.caption(f"Historique chargé : {get_supabase_history_days()} derniers jours")
 
 if st.sidebar.button("Rafraîchir les données", width="stretch"):
     st.cache_data.clear()
@@ -1003,14 +931,6 @@ st.sidebar.markdown("### Filtres opérationnels")
 
 cause_options = sorted(active["analysis_cause_label_fr"].dropna().astype(str).unique()) if "analysis_cause_label_fr" in active else []
 selected_causes = st.sidebar.multiselect("Cause", cause_options)
-
-
-# Chargement optionnel de l'historique Supabase.
-# Important : Streamlit exécute le code de tous les onglets à chaque rerun.
-# On évite donc de charger l'historique au démarrage.
-if using_supabase() and load_history_views:
-    with st.spinner("Chargement de l'historique Supabase..."):
-        history_all = add_display_columns(load_supabase_history())
 
 
 # =============================================================================
@@ -1276,7 +1196,7 @@ with tab_time_machine:
     )
 
     if history_all.empty:
-        st.info("L’historique n’est pas chargé. Active `Charger les vues historiques` dans la sidebar pour utiliser cette section.")
+        st.warning("Le fichier historique brut est introuvable ou vide.")
     elif "captured_at" not in history_all.columns:
         st.error("La colonne `captured_at` est manquante dans l’historique brut.")
     else:
@@ -1571,7 +1491,7 @@ with tab_history:
     )
 
     if history_all.empty:
-        st.info("L’historique n’est pas chargé. Active `Charger les vues historiques` dans la sidebar pour utiliser cette section.")
+        st.warning("Le fichier historique brut est introuvable ou vide.")
     elif "captured_at" not in history_all.columns:
         st.error("La colonne `captured_at` est manquante dans l’historique brut.")
     else:
@@ -2161,11 +2081,7 @@ with tab_quality:
 
 with tab_data:
     st.header("Données")
-    st.caption(
-        "Accès contrôlé aux tables principales du pipeline. "
-        "Pour garder l'application rapide, l'affichage est limité à 1 000 lignes, "
-        "mais les téléchargements contiennent les données complètes."
-    )
+    st.caption("Accès contrôlé aux tables principales du pipeline.")
 
     table_name = st.selectbox(
         "Table à afficher",
@@ -2200,11 +2116,5 @@ with tab_data:
         make_download(quality, "Télécharger le rapport qualité", "rapport_qualite.csv")
 
     else:
-        if history_all.empty:
-            st.info(
-                "L’historique n’est pas chargé. Active `Charger les vues historiques` "
-                "dans la sidebar pour afficher ou télécharger cette table."
-            )
-        else:
-            show_table(history_all.head(5000), height=620)
-            make_download(history_all, "Télécharger l’historique brut enrichi", "historique_pannes_enrichi.csv")
+        show_table(history_all.head(5000), height=620)
+        make_download(history_all, "Télécharger l’historique brut enrichi", "historique_pannes_enrichi.csv")
