@@ -9,9 +9,6 @@ jobs:
   update_outages:
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: write
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -22,27 +19,18 @@ jobs:
           python-version: "3.10"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
 
-      - name: Fetch raw outage data
+      - name: Prepare raw data directory
+        run: mkdir -p data/raw
+
+      - name: Fetch current outage data
         run: python scripts/fetch_outages.py
 
-      - name: Build DuckDB warehouse with SQL
-        run: python scripts/build_warehouse.py
-
-      - name: Export processed analytical tables
-        run: python scripts/export_tables.py
-
-      - name: Commit updated data
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/raw/hydroquebec_history.csv
-          git add data/processed/latest_outages.csv
-          git add data/processed/active_outages.csv
-          git add data/processed/daily_summary.csv
-          git add data/processed/data_quality_report.csv
-          git add sql/
-          git add scripts/
-          git commit -m "Update outage data pipeline outputs" || echo "No changes to commit"
-          git push
+      - name: Sync outage data to Supabase
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_DB_HOSTADDR: ${{ secrets.SUPABASE_DB_HOSTADDR }}
+        run: python scripts/sync_to_supabase.py
