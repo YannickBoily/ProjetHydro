@@ -326,24 +326,28 @@ def load_supabase_query(query: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     try:
-        import psycopg2
+        from sqlalchemy import create_engine
     except ImportError as exc:
         st.error(
-            "La dépendance `psycopg2-binary` est manquante. "
-            "Ajoute-la dans `requirements.txt` puis redéploie l'application."
+            "La dépendance `SQLAlchemy` est manquante. "
+            "Ajoute `sqlalchemy` dans `requirements.txt` puis redéploie l'application."
         )
         raise exc
 
-    connection_kwargs = {}
+    connect_args = {}
     if database_hostaddr:
-        connection_kwargs["hostaddr"] = database_hostaddr
+        connect_args["hostaddr"] = database_hostaddr
 
-    connection = psycopg2.connect(database_url, **connection_kwargs)
+    engine = create_engine(
+        database_url,
+        connect_args=connect_args,
+        pool_pre_ping=True,
+    )
 
     try:
-        df = pd.read_sql_query(query, connection)
+        df = pd.read_sql_query(query, engine)
     finally:
-        connection.close()
+        engine.dispose()
 
     date_cols = [
         "date",
@@ -398,20 +402,30 @@ def load_supabase_query(query: str) -> pd.DataFrame:
 
 
 def get_supabase_history_days() -> int:
-    raw_value = get_config_value("SUPABASE_HISTORY_DAYS", "180")
+    raw_value = get_config_value("SUPABASE_HISTORY_DAYS", "30")
     try:
         days = int(raw_value)
     except (TypeError, ValueError):
-        days = 180
+        days = 30
 
     return max(days, 1)
+
+
+def get_supabase_history_rows_limit() -> int:
+    raw_value = get_config_value("SUPABASE_HISTORY_ROWS_LIMIT", "25000")
+    try:
+        rows_limit = int(raw_value)
+    except (TypeError, ValueError):
+        rows_limit = 25000
+
+    return max(rows_limit, 1000)
 
 
 @st.cache_data(show_spinner=False, ttl=300)
 def load_supabase_active() -> pd.DataFrame:
     query = """
         SELECT *
-        FROM vw_active_outages
+        FROM app_active_outages
         ORDER BY customers_affected DESC NULLS LAST;
     """
     df = load_supabase_query(query)
@@ -434,7 +448,7 @@ def load_supabase_active() -> pd.DataFrame:
 def load_supabase_latest() -> pd.DataFrame:
     query = """
         SELECT *
-        FROM vw_latest_outages
+        FROM app_latest_outages
         ORDER BY last_capture_at DESC NULLS LAST, customers_affected DESC NULLS LAST;
     """
     return load_supabase_query(query)
@@ -443,6 +457,7 @@ def load_supabase_latest() -> pd.DataFrame:
 @st.cache_data(show_spinner=False, ttl=300)
 def load_supabase_history() -> pd.DataFrame:
     days = get_supabase_history_days()
+    rows_limit = get_supabase_history_rows_limit()
 
     query = f"""
         WITH bounds AS (
@@ -478,7 +493,8 @@ def load_supabase_history() -> pd.DataFrame:
         CROSS JOIN bounds b
         WHERE r.captured_at IS NOT NULL
           AND r.captured_at >= b.max_captured_at - INTERVAL '{days} days'
-        ORDER BY r.captured_at DESC;
+        ORDER BY r.captured_at DESC
+        LIMIT {rows_limit};
     """
 
     return load_supabase_query(query)
@@ -486,101 +502,10 @@ def load_supabase_history() -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False, ttl=300)
 def load_supabase_daily_summary() -> pd.DataFrame:
-    days = get_supabase_history_days()
-
-    query = f"""
-        WITH bounds AS (
-            SELECT MAX(captured_at) AS max_captured_at
-            FROM raw_outage_snapshots
-            WHERE captured_at IS NOT NULL
-        ),
-
-        snapshots AS (
-            SELECT
-                r.*,
-                DATE_TRUNC('minute', r.captured_at) AS capture_batch_minute,
-                CAST(r.captured_at AS DATE) AS capture_date
-            FROM raw_outage_snapshots r
-            CROSS JOIN bounds b
-            WHERE r.captured_at IS NOT NULL
-              AND r.captured_at >= b.max_captured_at - INTERVAL '{days} days'
-        ),
-
-        capture_summary AS (
-            SELECT
-                capture_batch_minute,
-                capture_date,
-                COUNT(DISTINCT outage_id) AS active_outages_estimate,
-                SUM(customers_affected) AS customers_affected_snapshot,
-                COUNT(DISTINCT municipality_id) AS municipalities_affected_snapshot,
-                SUM(CASE WHEN customers_affected >= 1000 THEN 1 ELSE 0 END) AS major_outages_snapshot
-            FROM snapshots
-            GROUP BY capture_batch_minute, capture_date
-        ),
-
-        daily_from_snapshots AS (
-            SELECT
-                capture_date,
-                COUNT(*) AS snapshots_count,
-                MAX(active_outages_estimate) AS max_active_outages_estimate,
-                ROUND(AVG(active_outages_estimate), 2) AS avg_active_outages_estimate,
-                MAX(customers_affected_snapshot) AS max_customers_affected,
-                ROUND(AVG(customers_affected_snapshot), 2) AS avg_customers_affected,
-                MAX(municipalities_affected_snapshot) AS max_municipalities_affected,
-                MAX(major_outages_snapshot) AS max_major_outages
-            FROM capture_summary
-            GROUP BY capture_date
-        ),
-
-        first_seen AS (
-            SELECT
-                outage_id,
-                MIN(captured_at) AS first_seen_at
-            FROM raw_outage_snapshots
-            WHERE outage_id IS NOT NULL
-              AND captured_at IS NOT NULL
-            GROUP BY outage_id
-        ),
-
-        new_outages AS (
-            SELECT
-                CAST(first_seen_at AS DATE) AS capture_date,
-                COUNT(*) AS new_outages_detected
-            FROM first_seen
-            GROUP BY CAST(first_seen_at AS DATE)
-        ),
-
-        observed AS (
-            SELECT
-                capture_date,
-                COUNT(*) AS raw_rows_count,
-                COUNT(DISTINCT outage_id) AS unique_outages_observed,
-                SUM(CASE WHEN LOWER(COALESCE(cause_label, 'unknown')) = 'unknown' THEN 1 ELSE 0 END) AS unknown_cause_rows,
-                COUNT(DISTINCT municipality_id) AS municipalities_observed
-            FROM snapshots
-            GROUP BY capture_date
-        )
-
-        SELECT
-            d.capture_date AS date,
-            d.snapshots_count,
-            d.max_active_outages_estimate,
-            d.avg_active_outages_estimate,
-            d.max_customers_affected,
-            d.avg_customers_affected,
-            d.max_municipalities_affected,
-            d.max_major_outages,
-            COALESCE(n.new_outages_detected, 0) AS new_outages_detected,
-            o.raw_rows_count,
-            o.unique_outages_observed,
-            o.unknown_cause_rows,
-            o.municipalities_observed
-        FROM daily_from_snapshots d
-        LEFT JOIN new_outages n
-            ON d.capture_date = n.capture_date
-        LEFT JOIN observed o
-            ON d.capture_date = o.capture_date
-        ORDER BY d.capture_date;
+    query = """
+        SELECT *
+        FROM app_daily_summary
+        ORDER BY date;
     """
 
     return load_supabase_query(query)
@@ -589,132 +514,16 @@ def load_supabase_daily_summary() -> pd.DataFrame:
 @st.cache_data(show_spinner=False, ttl=300)
 def load_supabase_quality_report() -> pd.DataFrame:
     query = """
-        WITH total AS (
-            SELECT COUNT(*) AS total_rows
-            FROM raw_outage_snapshots
-        ),
-
-        checks AS (
-            SELECT
-                'missing_outage_id' AS check_name,
-                'critical' AS severity,
-                COUNT(*) AS rows_affected,
-                'Rows where outage_id is missing.' AS description
-            FROM raw_outage_snapshots
-            WHERE outage_id IS NULL OR TRIM(outage_id) = ''
-
-            UNION ALL
-
-            SELECT
-                'missing_captured_at' AS check_name,
-                'critical' AS severity,
-                COUNT(*) AS rows_affected,
-                'Rows where captured_at is missing or invalid.' AS description
-            FROM raw_outage_snapshots
-            WHERE captured_at IS NULL
-
-            UNION ALL
-
-            SELECT
-                'negative_customers_affected' AS check_name,
-                'critical' AS severity,
-                COUNT(*) AS rows_affected,
-                'Rows where customers_affected is negative.' AS description
-            FROM raw_outage_snapshots
-            WHERE customers_affected < 0
-
-            UNION ALL
-
-            SELECT
-                'invalid_coordinates' AS check_name,
-                'warning' AS severity,
-                COUNT(*) AS rows_affected,
-                'Rows with coordinates outside approximate Quebec bounds.' AS description
-            FROM raw_outage_snapshots
-            WHERE lon IS NULL
-               OR lat IS NULL
-               OR lon < -80
-               OR lon > -57
-               OR lat < 44
-               OR lat > 63
-
-            UNION ALL
-
-            SELECT
-                'estimated_restore_before_start_time' AS check_name,
-                'warning' AS severity,
-                COUNT(*) AS rows_affected,
-                'Rows where estimated_restore is before start_time.' AS description
-            FROM raw_outage_snapshots
-            WHERE estimated_restore IS NOT NULL
-              AND start_time IS NOT NULL
-              AND estimated_restore < start_time
-
-            UNION ALL
-
-            SELECT
-                'captured_at_before_start_time' AS check_name,
-                'warning' AS severity,
-                COUNT(*) AS rows_affected,
-                'Rows where captured_at is before start_time.' AS description
-            FROM raw_outage_snapshots
-            WHERE captured_at IS NOT NULL
-              AND start_time IS NOT NULL
-              AND captured_at < start_time
-
-            UNION ALL
-
-            SELECT
-                'duplicate_outage_id_captured_at' AS check_name,
-                'critical' AS severity,
-                COUNT(*) AS rows_affected,
-                'Duplicate records for the same outage_id and captured_at.' AS description
-            FROM (
-                SELECT
-                    outage_id,
-                    captured_at,
-                    COUNT(*) AS duplicate_count
-                FROM raw_outage_snapshots
-                WHERE outage_id IS NOT NULL
-                  AND captured_at IS NOT NULL
-                GROUP BY outage_id, captured_at
-                HAVING COUNT(*) > 1
-            ) duplicates
-
-            UNION ALL
-
-            SELECT
-                'unknown_cause_rows' AS check_name,
-                'info' AS severity,
-                COUNT(*) AS rows_affected,
-                'Rows where cause_label is unknown.' AS description
-            FROM raw_outage_snapshots
-            WHERE LOWER(COALESCE(cause_label, 'unknown')) = 'unknown'
-        )
-
-        SELECT
-            c.check_name,
-            c.severity,
-            CASE
-                WHEN c.rows_affected = 0 THEN 'pass'
-                WHEN c.severity = 'info' THEN 'info'
-                ELSE 'fail'
-            END AS status,
-            c.rows_affected,
-            t.total_rows,
-            ROUND(c.rows_affected * 100.0 / NULLIF(t.total_rows, 0), 2) AS failed_rate_pct,
-            c.description,
-            NOW() AS created_at
-        FROM checks c
-        CROSS JOIN total t
+        SELECT *
+        FROM app_data_quality_report
         ORDER BY
-            CASE c.severity
+            CASE severity
                 WHEN 'critical' THEN 1
                 WHEN 'warning' THEN 2
                 WHEN 'info' THEN 3
                 ELSE 4
             END,
-            c.check_name;
+            check_name;
     """
 
     return load_supabase_query(query)
@@ -831,8 +640,9 @@ def enrich_raw_history(raw_df: pd.DataFrame, latest_df: pd.DataFrame) -> pd.Data
 
 
 def prepare_display_table(df: pd.DataFrame, columns: list[str] | None = None) -> pd.DataFrame:
-    if df.empty:
-        return df.copy()
+    """Prepare a dataframe for safe Streamlit display."""
+    if df is None or df.empty:
+        return pd.DataFrame()
 
     out = df.copy()
 
@@ -859,27 +669,65 @@ def prepare_display_table(df: pd.DataFrame, columns: list[str] | None = None) ->
 
     out = out.rename(columns=COLUMN_LABELS)
 
+    # Streamlit's dataframe frontend can break when column names are duplicated,
+    # missing, non-string, or visually identical after renaming.
+    clean_columns = []
     seen = {}
-    unique_cols = []
-    for col in out.columns:
-        if col not in seen:
-            seen[col] = 1
-            unique_cols.append(col)
-        else:
-            seen[col] += 1
-            unique_cols.append(f"{col} ({seen[col]})")
 
-    out.columns = unique_cols
+    for idx, col in enumerate(out.columns):
+        name = "" if col is None else str(col).strip()
+        if not name:
+            name = f"Colonne {idx + 1}"
+
+        if name not in seen:
+            seen[name] = 1
+            clean_columns.append(name)
+        else:
+            seen[name] += 1
+            clean_columns.append(f"{name} ({seen[name]})")
+
+    out.columns = clean_columns
+
+    # Reset index so Streamlit does not try to render a complex/pinned index column.
+    out = out.reset_index(drop=True)
+
     return out
 
 
 def show_table(df: pd.DataFrame, columns: list[str] | None = None, height: int | str = "auto") -> None:
-    st.dataframe(
-        prepare_display_table(df, columns),
-        width="stretch",
-        height=height,
-        hide_index=True,
-    )
+    """Display a dataframe while avoiding Streamlit frontend grid crashes."""
+    display_df = prepare_display_table(df, columns)
+
+    if display_df.empty:
+        st.info("Aucune donnée à afficher selon les filtres actuels.")
+        return
+
+    # Very large interactive tables can make Streamlit Cloud slow.
+    max_display_rows = 1000
+
+    if len(display_df) > max_display_rows:
+        st.caption(
+            f"Affichage des {max_display_rows:,} premières lignes sur {len(display_df):,}. "
+            "Utilise le bouton de téléchargement pour obtenir le fichier complet."
+        )
+        display_df = display_df.head(max_display_rows)
+
+    try:
+        st.dataframe(
+            display_df,
+            width="stretch",
+            height=height,
+            hide_index=True,
+        )
+    except Exception:
+        st.warning(
+            "Le tableau interactif n'a pas pu être affiché. "
+            "Affichage d'une version simplifiée."
+        )
+        st.markdown(
+            display_df.head(200).to_html(index=False, escape=True),
+            unsafe_allow_html=True,
+        )
 
 
 def format_int(value) -> str:
@@ -947,6 +795,9 @@ def apply_common_layout(fig, height: int | None = None):
 
 
 def make_download(df: pd.DataFrame, label: str, filename: str):
+    if df is None or df.empty:
+        return
+
     csv = prepare_display_table(df).to_csv(index=False).encode("utf-8-sig")
     st.download_button(
         label=label,
@@ -1043,11 +894,13 @@ def source_limit_summary(latest_df: pd.DataFrame, quality_df: pd.DataFrame) -> d
 DATA_SOURCE = "Supabase" if using_supabase() else "CSV"
 
 if using_supabase():
+    # Chargement rapide au démarrage : on ne charge pas l'historique brut ici.
+    # L'historique est chargé seulement si l'utilisateur active l'option dans la sidebar.
     active = add_display_columns(load_supabase_active())
     latest = add_display_columns(load_supabase_latest())
     daily = load_supabase_daily_summary()
     quality = load_supabase_quality_report()
-    history_all = add_display_columns(load_supabase_history())
+    history_all = pd.DataFrame()
 else:
     active = add_display_columns(load_csv(ACTIVE_FILE))
     latest = add_display_columns(load_csv(LATEST_FILE))
@@ -1086,8 +939,24 @@ st.sidebar.markdown("## ⚡ Hydro-Québec")
 st.sidebar.caption("Dashboard BI des pannes électriques au Québec")
 st.sidebar.caption(f"Source de données : {DATA_SOURCE}")
 
-if DATA_SOURCE == "Supabase":
-    st.sidebar.caption(f"Historique chargé : {get_supabase_history_days()} derniers jours")
+load_history_views = False
+
+if using_supabase():
+    load_history_views = st.sidebar.toggle(
+        "Charger les vues historiques",
+        value=False,
+        help=(
+            "Désactivé par défaut pour garder le dashboard rapide. "
+            "Active cette option seulement pour utiliser Retour dans le temps, Historique "
+            "ou télécharger l'historique."
+        ),
+    )
+
+    if load_history_views:
+        st.sidebar.info(
+            f"Historique chargé : derniers {get_supabase_history_days()} jours, "
+            f"maximum {get_supabase_history_rows_limit():,} lignes."
+        )
 
 if st.sidebar.button("Rafraîchir les données", width="stretch"):
     st.cache_data.clear()
@@ -1134,6 +1003,14 @@ st.sidebar.markdown("### Filtres opérationnels")
 
 cause_options = sorted(active["analysis_cause_label_fr"].dropna().astype(str).unique()) if "analysis_cause_label_fr" in active else []
 selected_causes = st.sidebar.multiselect("Cause", cause_options)
+
+
+# Chargement optionnel de l'historique Supabase.
+# Important : Streamlit exécute le code de tous les onglets à chaque rerun.
+# On évite donc de charger l'historique au démarrage.
+if using_supabase() and load_history_views:
+    with st.spinner("Chargement de l'historique Supabase..."):
+        history_all = add_display_columns(load_supabase_history())
 
 
 # =============================================================================
@@ -1399,7 +1276,7 @@ with tab_time_machine:
     )
 
     if history_all.empty:
-        st.warning("Le fichier historique brut est introuvable ou vide.")
+        st.info("L’historique n’est pas chargé. Active `Charger les vues historiques` dans la sidebar pour utiliser cette section.")
     elif "captured_at" not in history_all.columns:
         st.error("La colonne `captured_at` est manquante dans l’historique brut.")
     else:
@@ -1694,7 +1571,7 @@ with tab_history:
     )
 
     if history_all.empty:
-        st.warning("Le fichier historique brut est introuvable ou vide.")
+        st.info("L’historique n’est pas chargé. Active `Charger les vues historiques` dans la sidebar pour utiliser cette section.")
     elif "captured_at" not in history_all.columns:
         st.error("La colonne `captured_at` est manquante dans l’historique brut.")
     else:
@@ -2284,7 +2161,11 @@ with tab_quality:
 
 with tab_data:
     st.header("Données")
-    st.caption("Accès contrôlé aux tables principales du pipeline.")
+    st.caption(
+        "Accès contrôlé aux tables principales du pipeline. "
+        "Pour garder l'application rapide, l'affichage est limité à 1 000 lignes, "
+        "mais les téléchargements contiennent les données complètes."
+    )
 
     table_name = st.selectbox(
         "Table à afficher",
@@ -2319,5 +2200,11 @@ with tab_data:
         make_download(quality, "Télécharger le rapport qualité", "rapport_qualite.csv")
 
     else:
-        show_table(history_all.head(5000), height=620)
-        make_download(history_all, "Télécharger l’historique brut enrichi", "historique_pannes_enrichi.csv")
+        if history_all.empty:
+            st.info(
+                "L’historique n’est pas chargé. Active `Charger les vues historiques` "
+                "dans la sidebar pour afficher ou télécharger cette table."
+            )
+        else:
+            show_table(history_all.head(5000), height=620)
+            make_download(history_all, "Télécharger l’historique brut enrichi", "historique_pannes_enrichi.csv")
