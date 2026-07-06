@@ -273,7 +273,14 @@ def main() -> None:
     print(f"Local raw rows to sync: {len(raw_history):,}")
     print(f"Local municipality rows to sync: {len(municipalities):,}")
 
-    connection = psycopg2.connect(database_url)
+    database_hostaddr = os.environ.get("SUPABASE_DB_HOSTADDR")
+
+    connection_kwargs = {}
+
+    if database_hostaddr:
+        connection_kwargs["hostaddr"] = database_hostaddr
+
+    connection = psycopg2.connect(database_url, **connection_kwargs)
 
     try:
         sync_raw_history(connection, raw_history)
