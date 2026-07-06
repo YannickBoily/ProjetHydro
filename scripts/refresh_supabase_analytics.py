@@ -446,6 +446,22 @@ def main() -> None:
             """,
         )
 
+        execute_step(
+            connection,
+            "secure app tables",
+            """
+            ALTER TABLE app_latest_outages ENABLE ROW LEVEL SECURITY;
+            ALTER TABLE app_active_outages ENABLE ROW LEVEL SECURITY;
+            ALTER TABLE app_daily_summary ENABLE ROW LEVEL SECURITY;
+            ALTER TABLE app_data_quality_report ENABLE ROW LEVEL SECURITY;
+
+            REVOKE ALL ON TABLE app_latest_outages FROM anon, authenticated;
+            REVOKE ALL ON TABLE app_active_outages FROM anon, authenticated;
+            REVOKE ALL ON TABLE app_daily_summary FROM anon, authenticated;
+            REVOKE ALL ON TABLE app_data_quality_report FROM anon, authenticated;
+            """,
+        )
+
         with connection.cursor() as cursor:
             cursor.execute("SELECT COUNT(*), MAX(latest_row_captured_at) FROM app_latest_outages;")
             latest_count, latest_capture = cursor.fetchone()
