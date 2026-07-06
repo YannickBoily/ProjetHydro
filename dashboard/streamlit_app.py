@@ -402,11 +402,11 @@ def load_supabase_query(query: str) -> pd.DataFrame:
 
 
 def get_supabase_history_days() -> int:
-    raw_value = get_config_value("SUPABASE_HISTORY_DAYS", "30")
+    raw_value = get_config_value("SUPABASE_HISTORY_DAYS", "90")
     try:
         days = int(raw_value)
     except (TypeError, ValueError):
-        days = 30
+        days = 90
 
     return max(days, 1)
 
