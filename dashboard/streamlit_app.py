@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import datetime
+import os
 
 import pandas as pd
 import plotly.express as px
@@ -293,6 +294,430 @@ def load_csv(path: Path) -> pd.DataFrame:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
     return df
+
+
+# =============================================================================
+# Lecture Supabase
+# =============================================================================
+
+def get_config_value(name: str, default=None):
+    """Read configuration from environment variables or Streamlit secrets."""
+    value = os.environ.get(name)
+    if value:
+        return value
+
+    try:
+        return st.secrets.get(name, default)
+    except Exception:
+        return default
+
+
+def using_supabase() -> bool:
+    return bool(get_config_value("SUPABASE_DB_URL"))
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_supabase_query(query: str) -> pd.DataFrame:
+    """Run a SQL query against Supabase/PostgreSQL and return a DataFrame."""
+    database_url = get_config_value("SUPABASE_DB_URL")
+    database_hostaddr = get_config_value("SUPABASE_DB_HOSTADDR")
+
+    if not database_url:
+        return pd.DataFrame()
+
+    try:
+        import psycopg2
+    except ImportError as exc:
+        st.error(
+            "La dépendance `psycopg2-binary` est manquante. "
+            "Ajoute-la dans `requirements.txt` puis redéploie l'application."
+        )
+        raise exc
+
+    connection_kwargs = {}
+    if database_hostaddr:
+        connection_kwargs["hostaddr"] = database_hostaddr
+
+    connection = psycopg2.connect(database_url, **connection_kwargs)
+
+    try:
+        df = pd.read_sql_query(query, connection)
+    finally:
+        connection.close()
+
+    date_cols = [
+        "date",
+        "start_time",
+        "estimated_restore",
+        "captured_at",
+        "active_capture_at",
+        "latest_row_captured_at",
+        "first_capture_at",
+        "last_capture_at",
+        "known_cause_last_seen_at",
+        "created_at",
+    ]
+
+    for col in date_cols:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors="coerce", utc=True).dt.tz_convert(None)
+
+    numeric_cols = [
+        "customers_affected",
+        "municipality_id",
+        "capture_count",
+        "observed_duration_hours",
+        "outage_age_hours_at_capture",
+        "outage_age_hours_at_latest_capture",
+        "restore_eta_hours_at_capture",
+        "restore_eta_hours_at_latest_capture",
+        "lon",
+        "lat",
+        "rows_affected",
+        "total_rows",
+        "failed_rate_pct",
+        "snapshots_count",
+        "max_active_outages_estimate",
+        "avg_active_outages_estimate",
+        "max_customers_affected",
+        "avg_customers_affected",
+        "max_municipalities_affected",
+        "max_major_outages",
+        "new_outages_detected",
+        "raw_rows_count",
+        "unique_outages_observed",
+        "unknown_cause_rows",
+        "municipalities_observed",
+    ]
+
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    return df
+
+
+def get_supabase_history_days() -> int:
+    raw_value = get_config_value("SUPABASE_HISTORY_DAYS", "180")
+    try:
+        days = int(raw_value)
+    except (TypeError, ValueError):
+        days = 180
+
+    return max(days, 1)
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_supabase_active() -> pd.DataFrame:
+    query = """
+        SELECT *
+        FROM vw_active_outages
+        ORDER BY customers_affected DESC NULLS LAST;
+    """
+    df = load_supabase_query(query)
+
+    if not df.empty:
+        # Compatibility with the CSV version of the dashboard.
+        if "active_capture_at" not in df.columns and "latest_row_captured_at" in df.columns:
+            df["active_capture_at"] = df["latest_row_captured_at"]
+
+        if "outage_age_hours_at_capture" not in df.columns and "outage_age_hours_at_latest_capture" in df.columns:
+            df["outage_age_hours_at_capture"] = df["outage_age_hours_at_latest_capture"]
+
+        if "restore_eta_hours_at_capture" not in df.columns and "restore_eta_hours_at_latest_capture" in df.columns:
+            df["restore_eta_hours_at_capture"] = df["restore_eta_hours_at_latest_capture"]
+
+    return df
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_supabase_latest() -> pd.DataFrame:
+    query = """
+        SELECT *
+        FROM vw_latest_outages
+        ORDER BY last_capture_at DESC NULLS LAST, customers_affected DESC NULLS LAST;
+    """
+    return load_supabase_query(query)
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_supabase_history() -> pd.DataFrame:
+    days = get_supabase_history_days()
+
+    query = f"""
+        WITH bounds AS (
+            SELECT MAX(captured_at) AS max_captured_at
+            FROM raw_outage_snapshots
+            WHERE captured_at IS NOT NULL
+        )
+        SELECT
+            r.outage_id,
+            r.customers_affected,
+            r.start_time,
+            r.estimated_restore,
+            r.status_code,
+            r.status,
+            r.cause_code,
+            r.cause_label,
+            r.municipality_id,
+            r.captured_at,
+            r.lon,
+            r.lat,
+            COALESCE(
+                m.municipality_label,
+                'Municipalité ' || CAST(r.municipality_id AS TEXT)
+            ) AS municipality_label,
+            m.municipality_name,
+            m.municipality_full_name,
+            m.mrc_name,
+            m.region_name,
+            m.is_geocoded
+        FROM raw_outage_snapshots r
+        LEFT JOIN dim_municipalities m
+            ON r.municipality_id = m.municipality_id
+        CROSS JOIN bounds b
+        WHERE r.captured_at IS NOT NULL
+          AND r.captured_at >= b.max_captured_at - INTERVAL '{days} days'
+        ORDER BY r.captured_at DESC;
+    """
+
+    return load_supabase_query(query)
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_supabase_daily_summary() -> pd.DataFrame:
+    days = get_supabase_history_days()
+
+    query = f"""
+        WITH bounds AS (
+            SELECT MAX(captured_at) AS max_captured_at
+            FROM raw_outage_snapshots
+            WHERE captured_at IS NOT NULL
+        ),
+
+        snapshots AS (
+            SELECT
+                r.*,
+                DATE_TRUNC('minute', r.captured_at) AS capture_batch_minute,
+                CAST(r.captured_at AS DATE) AS capture_date
+            FROM raw_outage_snapshots r
+            CROSS JOIN bounds b
+            WHERE r.captured_at IS NOT NULL
+              AND r.captured_at >= b.max_captured_at - INTERVAL '{days} days'
+        ),
+
+        capture_summary AS (
+            SELECT
+                capture_batch_minute,
+                capture_date,
+                COUNT(DISTINCT outage_id) AS active_outages_estimate,
+                SUM(customers_affected) AS customers_affected_snapshot,
+                COUNT(DISTINCT municipality_id) AS municipalities_affected_snapshot,
+                SUM(CASE WHEN customers_affected >= 1000 THEN 1 ELSE 0 END) AS major_outages_snapshot
+            FROM snapshots
+            GROUP BY capture_batch_minute, capture_date
+        ),
+
+        daily_from_snapshots AS (
+            SELECT
+                capture_date,
+                COUNT(*) AS snapshots_count,
+                MAX(active_outages_estimate) AS max_active_outages_estimate,
+                ROUND(AVG(active_outages_estimate), 2) AS avg_active_outages_estimate,
+                MAX(customers_affected_snapshot) AS max_customers_affected,
+                ROUND(AVG(customers_affected_snapshot), 2) AS avg_customers_affected,
+                MAX(municipalities_affected_snapshot) AS max_municipalities_affected,
+                MAX(major_outages_snapshot) AS max_major_outages
+            FROM capture_summary
+            GROUP BY capture_date
+        ),
+
+        first_seen AS (
+            SELECT
+                outage_id,
+                MIN(captured_at) AS first_seen_at
+            FROM raw_outage_snapshots
+            WHERE outage_id IS NOT NULL
+              AND captured_at IS NOT NULL
+            GROUP BY outage_id
+        ),
+
+        new_outages AS (
+            SELECT
+                CAST(first_seen_at AS DATE) AS capture_date,
+                COUNT(*) AS new_outages_detected
+            FROM first_seen
+            GROUP BY CAST(first_seen_at AS DATE)
+        ),
+
+        observed AS (
+            SELECT
+                capture_date,
+                COUNT(*) AS raw_rows_count,
+                COUNT(DISTINCT outage_id) AS unique_outages_observed,
+                SUM(CASE WHEN LOWER(COALESCE(cause_label, 'unknown')) = 'unknown' THEN 1 ELSE 0 END) AS unknown_cause_rows,
+                COUNT(DISTINCT municipality_id) AS municipalities_observed
+            FROM snapshots
+            GROUP BY capture_date
+        )
+
+        SELECT
+            d.capture_date AS date,
+            d.snapshots_count,
+            d.max_active_outages_estimate,
+            d.avg_active_outages_estimate,
+            d.max_customers_affected,
+            d.avg_customers_affected,
+            d.max_municipalities_affected,
+            d.max_major_outages,
+            COALESCE(n.new_outages_detected, 0) AS new_outages_detected,
+            o.raw_rows_count,
+            o.unique_outages_observed,
+            o.unknown_cause_rows,
+            o.municipalities_observed
+        FROM daily_from_snapshots d
+        LEFT JOIN new_outages n
+            ON d.capture_date = n.capture_date
+        LEFT JOIN observed o
+            ON d.capture_date = o.capture_date
+        ORDER BY d.capture_date;
+    """
+
+    return load_supabase_query(query)
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_supabase_quality_report() -> pd.DataFrame:
+    query = """
+        WITH total AS (
+            SELECT COUNT(*) AS total_rows
+            FROM raw_outage_snapshots
+        ),
+
+        checks AS (
+            SELECT
+                'missing_outage_id' AS check_name,
+                'critical' AS severity,
+                COUNT(*) AS rows_affected,
+                'Rows where outage_id is missing.' AS description
+            FROM raw_outage_snapshots
+            WHERE outage_id IS NULL OR TRIM(outage_id) = ''
+
+            UNION ALL
+
+            SELECT
+                'missing_captured_at' AS check_name,
+                'critical' AS severity,
+                COUNT(*) AS rows_affected,
+                'Rows where captured_at is missing or invalid.' AS description
+            FROM raw_outage_snapshots
+            WHERE captured_at IS NULL
+
+            UNION ALL
+
+            SELECT
+                'negative_customers_affected' AS check_name,
+                'critical' AS severity,
+                COUNT(*) AS rows_affected,
+                'Rows where customers_affected is negative.' AS description
+            FROM raw_outage_snapshots
+            WHERE customers_affected < 0
+
+            UNION ALL
+
+            SELECT
+                'invalid_coordinates' AS check_name,
+                'warning' AS severity,
+                COUNT(*) AS rows_affected,
+                'Rows with coordinates outside approximate Quebec bounds.' AS description
+            FROM raw_outage_snapshots
+            WHERE lon IS NULL
+               OR lat IS NULL
+               OR lon < -80
+               OR lon > -57
+               OR lat < 44
+               OR lat > 63
+
+            UNION ALL
+
+            SELECT
+                'estimated_restore_before_start_time' AS check_name,
+                'warning' AS severity,
+                COUNT(*) AS rows_affected,
+                'Rows where estimated_restore is before start_time.' AS description
+            FROM raw_outage_snapshots
+            WHERE estimated_restore IS NOT NULL
+              AND start_time IS NOT NULL
+              AND estimated_restore < start_time
+
+            UNION ALL
+
+            SELECT
+                'captured_at_before_start_time' AS check_name,
+                'warning' AS severity,
+                COUNT(*) AS rows_affected,
+                'Rows where captured_at is before start_time.' AS description
+            FROM raw_outage_snapshots
+            WHERE captured_at IS NOT NULL
+              AND start_time IS NOT NULL
+              AND captured_at < start_time
+
+            UNION ALL
+
+            SELECT
+                'duplicate_outage_id_captured_at' AS check_name,
+                'critical' AS severity,
+                COUNT(*) AS rows_affected,
+                'Duplicate records for the same outage_id and captured_at.' AS description
+            FROM (
+                SELECT
+                    outage_id,
+                    captured_at,
+                    COUNT(*) AS duplicate_count
+                FROM raw_outage_snapshots
+                WHERE outage_id IS NOT NULL
+                  AND captured_at IS NOT NULL
+                GROUP BY outage_id, captured_at
+                HAVING COUNT(*) > 1
+            ) duplicates
+
+            UNION ALL
+
+            SELECT
+                'unknown_cause_rows' AS check_name,
+                'info' AS severity,
+                COUNT(*) AS rows_affected,
+                'Rows where cause_label is unknown.' AS description
+            FROM raw_outage_snapshots
+            WHERE LOWER(COALESCE(cause_label, 'unknown')) = 'unknown'
+        )
+
+        SELECT
+            c.check_name,
+            c.severity,
+            CASE
+                WHEN c.rows_affected = 0 THEN 'pass'
+                WHEN c.severity = 'info' THEN 'info'
+                ELSE 'fail'
+            END AS status,
+            c.rows_affected,
+            t.total_rows,
+            ROUND(c.rows_affected * 100.0 / NULLIF(t.total_rows, 0), 2) AS failed_rate_pct,
+            c.description,
+            NOW() AS created_at
+        FROM checks c
+        CROSS JOIN total t
+        ORDER BY
+            CASE c.severity
+                WHEN 'critical' THEN 1
+                WHEN 'warning' THEN 2
+                WHEN 'info' THEN 3
+                ELSE 4
+            END,
+            c.check_name;
+    """
+
+    return load_supabase_query(query)
 
 
 def translate_text(value, mapping: dict, default: str = "Inconnue") -> str:
@@ -615,12 +1040,21 @@ def source_limit_summary(latest_df: pd.DataFrame, quality_df: pd.DataFrame) -> d
 # Chargement
 # =============================================================================
 
-active = add_display_columns(load_csv(ACTIVE_FILE))
-latest = add_display_columns(load_csv(LATEST_FILE))
-daily = load_csv(DAILY_FILE)
-quality = load_csv(QUALITY_FILE)
-raw = add_display_columns(load_csv(RAW_FILE))
-history_all = enrich_raw_history(raw, latest)
+DATA_SOURCE = "Supabase" if using_supabase() else "CSV"
+
+if using_supabase():
+    active = add_display_columns(load_supabase_active())
+    latest = add_display_columns(load_supabase_latest())
+    daily = load_supabase_daily_summary()
+    quality = load_supabase_quality_report()
+    history_all = add_display_columns(load_supabase_history())
+else:
+    active = add_display_columns(load_csv(ACTIVE_FILE))
+    latest = add_display_columns(load_csv(LATEST_FILE))
+    daily = load_csv(DAILY_FILE)
+    quality = load_csv(QUALITY_FILE)
+    raw = add_display_columns(load_csv(RAW_FILE))
+    history_all = enrich_raw_history(raw, latest)
 
 if not quality.empty:
     if "check_name" in quality.columns:
@@ -650,6 +1084,10 @@ if active.empty or latest.empty or daily.empty:
 
 st.sidebar.markdown("## ⚡ Hydro-Québec")
 st.sidebar.caption("Dashboard BI des pannes électriques au Québec")
+st.sidebar.caption(f"Source de données : {DATA_SOURCE}")
+
+if DATA_SOURCE == "Supabase":
+    st.sidebar.caption(f"Historique chargé : {get_supabase_history_days()} derniers jours")
 
 if st.sidebar.button("Rafraîchir les données", width="stretch"):
     st.cache_data.clear()
