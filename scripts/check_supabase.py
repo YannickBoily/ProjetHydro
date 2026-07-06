@@ -10,8 +10,14 @@ def main() -> None:
     if not database_url:
         raise RuntimeError("Missing SUPABASE_DB_URL environment variable.")
 
-    connection = psycopg2.connect(database_url)
+    database_hostaddr = os.environ.get("SUPABASE_DB_HOSTADDR")
 
+    connection_kwargs = {}
+
+    if database_hostaddr:
+        connection_kwargs["hostaddr"] = database_hostaddr
+
+    connection = psycopg2.connect(database_url, **connection_kwargs)
     try:
         summary = pd.read_sql_query(
             """
