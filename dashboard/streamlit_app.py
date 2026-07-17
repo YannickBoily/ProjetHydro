@@ -432,11 +432,11 @@ def get_supabase_history_days() -> int:
 
 
 def get_supabase_history_rows_limit() -> int:
-    raw_value = get_config_value("SUPABASE_HISTORY_ROWS_LIMIT", "25000")
+    raw_value = get_config_value("SUPABASE_HISTORY_ROWS_LIMIT", "250000")
     try:
         rows_limit = int(raw_value)
     except (TypeError, ValueError):
-        rows_limit = 25000
+        rows_limit = 250000
 
     return max(rows_limit, 1000)
 
