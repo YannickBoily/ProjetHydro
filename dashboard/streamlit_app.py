@@ -339,7 +339,7 @@ CAUSE_TRANSLATIONS = {
     "other": "Autre",
     "equipment": "Bris d’équipement",
     "vegetation": "Végétation",
-    "accident": "Accident ou incident",
+    "accident": "Accident",
     "weather": "Conditions météorologiques",
     "animal": "Animal",
 }
@@ -608,11 +608,11 @@ def load_supabase_query(query: str) -> pd.DataFrame:
 
 
 def get_supabase_history_days() -> int:
-    raw_value = get_config_value("SUPABASE_HISTORY_DAYS", "90")
+    raw_value = get_config_value("SUPABASE_HISTORY_DAYS", "355")
     try:
         days = int(raw_value)
     except (TypeError, ValueError):
-        days = 90
+        days = 355
 
     return max(days, 1)
 
@@ -622,7 +622,7 @@ def get_supabase_history_rows_limit() -> int:
     try:
         rows_limit = int(raw_value)
     except (TypeError, ValueError):
-        rows_limit = 25000
+        rows_limit = 250000
 
     return max(rows_limit, 1000)
 
@@ -874,9 +874,6 @@ def prepare_display_table(df: pd.DataFrame, columns: list[str] | None = None) ->
             out = out.drop(columns=[raw_col])
 
     out = out.rename(columns=COLUMN_LABELS)
-
-    # Streamlit's dataframe frontend can break when column names are duplicated,
-    # missing, non-string, or visually identical after renaming.
     clean_columns = []
     seen = {}
 
@@ -909,7 +906,7 @@ def show_table(df: pd.DataFrame, columns: list[str] | None = None, height: int |
         return
 
     # Very large interactive tables can make Streamlit Cloud slow.
-    max_display_rows = 1000
+    max_display_rows = 250
 
     if len(display_df) > max_display_rows:
         st.caption(
@@ -1039,7 +1036,7 @@ def render_outage_map(
     if "customers_affected" in geo.columns:
         customers = pd.to_numeric(geo["customers_affected"], errors="coerce").fillna(0).clip(lower=0)
         # Square-root scaling prevents one large outage from making every other marker invisible.
-        geo["taille_carte"] = customers.pow(0.5) + 4
+        geo["taille_carte"] = customers.pow(0.5) + 2
     else:
         geo["taille_carte"] = 4
 
