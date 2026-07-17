@@ -1037,11 +1037,15 @@ def render_outage_map(
         )
 
     if "customers_affected" in geo.columns:
-        geo["taille"] = geo["customers_affected"].fillna(1).clip(lower=1)
+        customers = pd.to_numeric(geo["customers_affected"], errors="coerce").fillna(0).clip(lower=0)
+        # Square-root scaling prevents one large outage from making every other marker invisible.
+        geo["taille_carte"] = customers.pow(0.5) + 4
     else:
-        geo["taille"] = 1
+        geo["taille_carte"] = 4
 
-    cause_column = get_cause_column(geo)
+    if cause_column := get_cause_column(geo):
+        geo[cause_column] = geo[cause_column].fillna("Inconnue")
+
     hover_cols = [
         "customers_affected",
         "municipality_label",
@@ -1060,7 +1064,8 @@ def render_outage_map(
         geo,
         lat="lat",
         lon="lon",
-        size="taille",
+        size="taille_carte",
+        size_max=MAP_MARKER_MAX_SIZE,
         color=cause_column,
         hover_data=hover_cols,
         zoom=5,
@@ -1070,12 +1075,15 @@ def render_outage_map(
             "analysis_cause_label_fr": "Cause",
             "history_cause_label_fr": "Cause",
             "latest_raw_cause_label_fr": "Cause",
-            "taille": "Clients affectés",
+            "taille_carte": "Importance visuelle",
         },
+    )
+    fig.update_traces(
+        marker=dict(sizemin=MAP_MARKER_MIN_SIZE, opacity=0.92),
     )
     fig.update_layout(
         template=PLOT_TEMPLATE,
-        map_style="open-street-map",
+        map_style=MAP_STYLE,
         margin=dict(l=0, r=0, t=50, b=0),
         legend=dict(title=None, orientation="h", y=1.04, x=0),
     )
@@ -1208,6 +1216,9 @@ NEUTRAL_COLOR = "#64748b"
 GOOD_COLOR = "#4ade80"
 WARNING_COLOR = "#fbbf24"
 DANGER_COLOR = "#fb7185"
+MAP_STYLE = "carto-darkmatter"
+MAP_MARKER_MIN_SIZE = 10
+MAP_MARKER_MAX_SIZE = 38
 
 CAUSE_COLORS = {
     "Inconnue": "#64748b",
@@ -1386,12 +1397,16 @@ def render_clean_map(
             geo = geo.head(max_points)
         st.caption(f"Carte limitée aux {len(geo):,} observations les plus importantes.")
 
-    geo["taille"] = (
-        pd.to_numeric(geo["customers_affected"], errors="coerce").fillna(1).clip(lower=1)
-        if "customers_affected" in geo.columns
-        else 1
-    )
+    if "customers_affected" in geo.columns:
+        customers = pd.to_numeric(geo["customers_affected"], errors="coerce").fillna(0).clip(lower=0)
+        # Square-root scaling keeps small outages visible while preserving relative importance.
+        geo["taille_carte"] = customers.pow(0.5) + 4
+    else:
+        geo["taille_carte"] = 4
+
     cause_col = get_cause_column(geo)
+    if cause_col:
+        geo[cause_col] = geo[cause_col].fillna("Inconnue")
     hover_cols = [
         "customers_affected",
         "municipality_label",
@@ -1410,7 +1425,8 @@ def render_clean_map(
         geo,
         lat="lat",
         lon="lon",
-        size="taille",
+        size="taille_carte",
+        size_max=MAP_MARKER_MAX_SIZE,
         color=cause_col,
         color_discrete_map=CAUSE_COLORS,
         hover_data=hover_cols,
@@ -1420,12 +1436,15 @@ def render_clean_map(
             "analysis_cause_label_fr": "Cause",
             "history_cause_label_fr": "Cause",
             "latest_raw_cause_label_fr": "Cause",
-            "taille": "Clients affectés",
+            "taille_carte": "Importance visuelle",
         },
+    )
+    fig.update_traces(
+        marker=dict(sizemin=MAP_MARKER_MIN_SIZE, opacity=0.94),
     )
     fig.update_layout(
         template=PLOT_TEMPLATE,
-        map_style="open-street-map",
+        map_style=MAP_STYLE,
         paper_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=0, r=0, t=5, b=0),
         legend=dict(
@@ -1960,7 +1979,7 @@ elif page == "Explorer la carte":
         map_col, side_col = st.columns([1.65, 0.85], gap="large")
         with map_col:
             render_section_header("Carte", "Taille des points : clients affectés")
-            render_clean_map(map_display_data, height=660, max_points=max_map_points)
+            render_clean_map(map_display_data, height=720, max_points=max_map_points)
 
         with side_col:
             render_section_header("Municipalités les plus touchées", "Top 8")
