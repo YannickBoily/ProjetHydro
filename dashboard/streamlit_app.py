@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import datetime
 import os
+import html
 
 import pandas as pd
 import plotly.express as px
@@ -34,109 +35,294 @@ st.set_page_config(
 st.markdown(
     """
 <style>
+    :root {
+        --hq-bg: #0b0f15;
+        --hq-panel: #111722;
+        --hq-panel-soft: #0f141d;
+        --hq-line: rgba(148, 163, 184, 0.18);
+        --hq-line-strong: rgba(148, 163, 184, 0.30);
+        --hq-text: #f8fafc;
+        --hq-muted: #94a3b8;
+        --hq-accent: #ff4b4b;
+        --hq-good: #4ade80;
+        --hq-warning: #fbbf24;
+        --hq-danger: #fb7185;
+    }
+
+    .stApp {
+        background: var(--hq-bg);
+    }
+
     .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 2rem;
-        max-width: 1560px;
+        max-width: 1420px;
+        /* Le header Streamlit est superposé au contenu principal. */
+        padding-top: 4.25rem;
+        padding-bottom: 3rem;
+    }
+
+    [data-testid="stHeader"] {
+        background: rgba(11, 15, 21, 0.96);
+        border-bottom: 1px solid rgba(148, 163, 184, 0.08);
     }
 
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #151923 0%, #0f131c 100%);
-        border-right: 1px solid rgba(148, 163, 184, 0.22);
+        background: #0d121a;
+        border-right: 1px solid var(--hq-line);
+    }
+
+    [data-testid="stSidebar"] .block-container {
+        padding-top: 1.2rem;
+    }
+
+    [data-testid="stSidebar"] div[role="radiogroup"] > label {
+        border-radius: 10px;
+        padding: 0.50rem 0.65rem;
+        margin-bottom: 0.18rem;
+        transition: background 120ms ease;
+    }
+
+    [data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
+        background: rgba(148, 163, 184, 0.08);
     }
 
     [data-testid="stMetric"] {
-        background: linear-gradient(135deg, #151b26 0%, #101622 100%);
-        border: 1px solid rgba(148, 163, 184, 0.22);
-        padding: 1rem 1.15rem;
-        border-radius: 18px;
-        box-shadow: 0 12px 30px rgba(0,0,0,0.18);
+        background: var(--hq-panel);
+        border: 1px solid var(--hq-line);
+        padding: 0.95rem 1.05rem;
+        border-radius: 14px;
+        box-shadow: none;
+        min-height: 104px;
     }
 
     [data-testid="stMetricLabel"] {
-        color: #94a3b8;
-        font-size: 0.88rem;
+        color: var(--hq-muted);
+        font-size: 0.82rem;
+        letter-spacing: 0.01em;
     }
 
     [data-testid="stMetricValue"] {
-        font-size: 2rem;
-        font-weight: 850;
+        color: var(--hq-text);
+        font-size: 1.85rem;
+        font-weight: 780;
+        letter-spacing: -0.03em;
     }
 
-    div[data-testid="stTabs"] button {
-        padding: 0.75rem 0.95rem;
-        font-weight: 650;
+    [data-testid="stMetricDelta"] {
+        font-size: 0.78rem;
     }
 
-    div[data-testid="stTabs"] button[aria-selected="true"] {
-        color: #ff4b4b;
-        border-bottom: 2px solid #ff4b4b;
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        border-color: var(--hq-line) !important;
+        border-radius: 16px !important;
+        background: rgba(17, 23, 34, 0.40);
     }
 
-    .hero {
-        background:
-            radial-gradient(circle at top left, rgba(255, 75, 75, 0.20), transparent 30%),
-            linear-gradient(135deg, #151b26 0%, #0b0f17 68%);
-        border: 1px solid rgba(148, 163, 184, 0.24);
-        border-radius: 24px;
-        padding: 1.6rem 1.65rem;
-        margin-bottom: 1.1rem;
-        box-shadow: 0 18px 44px rgba(0,0,0,0.26);
+    .app-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1.5rem;
+        padding: 0.35rem 0 1.15rem 0;
+        border-bottom: 1px solid var(--hq-line);
+        margin-bottom: 1.35rem;
     }
 
-    .hero-title {
-        font-size: 2.35rem;
-        line-height: 1.1;
-        font-weight: 900;
-        margin-bottom: 0.55rem;
-        letter-spacing: -0.04em;
+    .app-title {
+        color: var(--hq-text);
+        font-size: 1.70rem;
+        line-height: 1.15;
+        font-weight: 800;
+        letter-spacing: -0.035em;
+        margin: 0;
     }
 
-    .hero-subtitle {
+    .app-subtitle {
+        color: var(--hq-muted);
+        font-size: 0.92rem;
+        margin-top: 0.35rem;
+    }
+
+    .app-meta {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 0.45rem;
+        max-width: 520px;
+    }
+
+    .badge {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid var(--hq-line);
+        border-radius: 999px;
+        padding: 0.38rem 0.68rem;
         color: #cbd5e1;
-        font-size: 1.02rem;
-        max-width: 1120px;
+        background: rgba(148, 163, 184, 0.06);
+        font-size: 0.78rem;
+        white-space: nowrap;
+    }
+
+    .badge-accent {
+        border-color: rgba(255, 75, 75, 0.36);
+        background: rgba(255, 75, 75, 0.09);
+        color: #fecaca;
+    }
+
+    .page-head {
+        margin-bottom: 1.20rem;
+    }
+
+    .page-eyebrow {
+        color: var(--hq-accent);
+        text-transform: uppercase;
+        font-weight: 750;
+        font-size: 0.72rem;
+        letter-spacing: 0.10em;
+        margin-bottom: 0.35rem;
+    }
+
+    .page-title {
+        color: var(--hq-text);
+        font-size: 2.0rem;
+        font-weight: 820;
+        line-height: 1.12;
+        letter-spacing: -0.04em;
+        margin: 0;
+    }
+
+    .page-description {
+        color: var(--hq-muted);
+        max-width: 900px;
+        margin-top: 0.48rem;
+        font-size: 0.94rem;
         line-height: 1.55;
     }
 
-    .muted {
-        color: #94a3b8;
-    }
-
-    .insight {
-        background: rgba(255,255,255,0.035);
-        border-left: 4px solid #ff4b4b;
-        padding: 0.9rem 1rem;
-        border-radius: 12px;
-        color: #cbd5e1;
-        margin-top: 0.55rem;
-        margin-bottom: 0.9rem;
-    }
-
-    .small-note {
-        color: #94a3b8;
-        font-size: 0.9rem;
-        line-height: 1.45;
-    }
-
-    .status-good {
-        color: #86efac;
-        font-weight: 800;
-    }
-
-    .status-warning {
-        color: #fde68a;
-        font-weight: 800;
-    }
-
-    .status-bad {
-        color: #fca5a5;
-        font-weight: 800;
+    .section-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-top: 1.65rem;
+        margin-bottom: 0.65rem;
     }
 
     .section-title {
-        margin-top: 0.25rem;
-        margin-bottom: 0.25rem;
+        color: var(--hq-text);
+        font-size: 1.22rem;
+        font-weight: 760;
+        margin: 0;
+    }
+
+    .section-note {
+        color: var(--hq-muted);
+        font-size: 0.82rem;
+    }
+
+    .status-banner {
+        border: 1px solid var(--hq-line);
+        border-left-width: 4px;
+        border-radius: 12px;
+        padding: 0.90rem 1rem;
+        margin: 0.75rem 0 1rem 0;
+        background: rgba(148, 163, 184, 0.04);
+        color: #dbe5f1;
+        line-height: 1.5;
+    }
+
+    .status-good {
+        border-left-color: var(--hq-good);
+        background: rgba(74, 222, 128, 0.055);
+    }
+
+    .status-warning {
+        border-left-color: var(--hq-warning);
+        background: rgba(251, 191, 36, 0.055);
+    }
+
+    .status-danger {
+        border-left-color: var(--hq-danger);
+        background: rgba(251, 113, 133, 0.055);
+    }
+
+    .priority-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.42rem;
+    }
+
+    .priority-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 0.8rem;
+        align-items: center;
+        padding: 0.72rem 0;
+        border-bottom: 1px solid var(--hq-line);
+    }
+
+    .priority-row:last-child {
+        border-bottom: 0;
+    }
+
+    .priority-name {
+        color: var(--hq-text);
+        font-weight: 680;
+        font-size: 0.91rem;
+    }
+
+    .priority-meta {
+        color: var(--hq-muted);
+        font-size: 0.78rem;
+        margin-top: 0.16rem;
+    }
+
+    .priority-value {
+        color: var(--hq-text);
+        font-weight: 780;
+        font-size: 1.0rem;
+        white-space: nowrap;
+    }
+
+    .filter-summary {
+        color: var(--hq-muted);
+        font-size: 0.82rem;
+        padding: 0.45rem 0 0.3rem 0;
+    }
+
+    .muted {
+        color: var(--hq-muted);
+    }
+
+    div[data-testid="stDataFrame"] {
+        border: 1px solid var(--hq-line);
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+    .stDownloadButton button,
+    .stButton button {
+        border-radius: 10px;
+        border-color: var(--hq-line-strong);
+    }
+
+    hr {
+        border-color: var(--hq-line) !important;
+    }
+
+    @media (max-width: 900px) {
+        .block-container {
+            padding-top: 4rem;
+        }
+        .app-header {
+            display: block;
+        }
+        .app-meta {
+            justify-content: flex-start;
+            margin-top: 0.8rem;
+        }
+        .page-title {
+            font-size: 1.65rem;
+        }
     }
 </style>
 """,
@@ -432,11 +618,11 @@ def get_supabase_history_days() -> int:
 
 
 def get_supabase_history_rows_limit() -> int:
-    raw_value = get_config_value("SUPABASE_HISTORY_ROWS_LIMIT", "250000")
+    raw_value = get_config_value("SUPABASE_HISTORY_ROWS_LIMIT", "25000")
     try:
         rows_limit = int(raw_value)
     except (TypeError, ValueError):
-        rows_limit = 250000
+        rows_limit = 25000
 
     return max(rows_limit, 1000)
 
@@ -1012,15 +1198,317 @@ def source_limit_summary(latest_df: pd.DataFrame, quality_df: pd.DataFrame) -> d
     }
 
 
+
 # =============================================================================
-# Chargement
+# Présentation et agrégations du nouveau dashboard
+# =============================================================================
+
+ACCENT_COLOR = "#ff4b4b"
+NEUTRAL_COLOR = "#64748b"
+GOOD_COLOR = "#4ade80"
+WARNING_COLOR = "#fbbf24"
+DANGER_COLOR = "#fb7185"
+
+CAUSE_COLORS = {
+    "Inconnue": "#64748b",
+    "Autre": "#a78bfa",
+    "Bris d’équipement": "#f59e0b",
+    "Végétation": "#22c55e",
+    "Accident ou incident": "#ef4444",
+    "Conditions météorologiques": "#38bdf8",
+    "Animal": "#f472b6",
+}
+
+QUALITY_DESCRIPTION_FR = {
+    "missing_outage_id": "Chaque observation doit posséder un identifiant de panne.",
+    "missing_captured_at": "Chaque observation doit contenir un moment de capture.",
+    "negative_customers_affected": "Le nombre de clients affectés ne peut pas être négatif.",
+    "invalid_coordinates": "Les coordonnées doivent se trouver dans une plage géographique valide.",
+    "estimated_restore_before_start_time": "Le rétablissement estimé ne doit pas précéder le début de la panne.",
+    "captured_at_before_start_time": "La capture ne doit pas précéder le début déclaré de la panne.",
+    "duplicate_outage_id_captured_at": "Une panne ne doit apparaître qu’une fois par moment de capture.",
+    "unknown_cause_rows": "La source ne fournit pas toujours la cause au moment de la capture.",
+}
+
+
+def render_page_header(eyebrow: str, title: str, description: str) -> None:
+    st.markdown(
+        f"""
+        <div class="page-head">
+            <div class="page-eyebrow">{html.escape(eyebrow)}</div>
+            <h1 class="page-title">{html.escape(title)}</h1>
+            <div class="page-description">{html.escape(description)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_section_header(title: str, note: str | None = None) -> None:
+    note_html = f'<span class="section-note">{html.escape(note)}</span>' if note else ""
+    st.markdown(
+        f"""
+        <div class="section-head">
+            <h2 class="section-title">{html.escape(title)}</h2>
+            {note_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_status(message: str, level: str = "good") -> None:
+    class_name = {
+        "good": "status-good",
+        "warning": "status-warning",
+        "danger": "status-danger",
+    }.get(level, "status-good")
+    st.markdown(
+        f'<div class="status-banner {class_name}">{html.escape(message)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def unique_outage_count(df: pd.DataFrame) -> int:
+    if df is None or df.empty:
+        return 0
+    if "outage_id" in df.columns:
+        return int(df["outage_id"].nunique())
+    return int(len(df))
+
+
+def safe_numeric_sum(df: pd.DataFrame, column: str) -> float:
+    if df is None or df.empty or column not in df.columns:
+        return 0
+    return float(pd.to_numeric(df[column], errors="coerce").fillna(0).sum())
+
+
+def representative_outages(df: pd.DataFrame) -> pd.DataFrame:
+    """Return one representative row per outage for cumulative historical views."""
+    if df is None or df.empty or "outage_id" not in df.columns:
+        return df.copy() if df is not None else pd.DataFrame()
+
+    out = df.copy()
+    if "customers_affected" in out.columns:
+        out["customers_affected"] = pd.to_numeric(out["customers_affected"], errors="coerce")
+        out = (
+            out.sort_values(["outage_id", "customers_affected"], ascending=[True, False])
+            .drop_duplicates("outage_id", keep="first")
+        )
+    elif "captured_at" in out.columns:
+        out = out.sort_values("captured_at").drop_duplicates("outage_id", keep="last")
+    else:
+        out = out.drop_duplicates("outage_id", keep="last")
+    return out
+
+
+def clean_chart_layout(fig, height: int = 420, show_legend: bool = False):
+    fig.update_layout(
+        template=PLOT_TEMPLATE,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        height=height,
+        showlegend=show_legend,
+        font=dict(family="Inter, Segoe UI, Arial", size=12, color="#cbd5e1"),
+        margin=dict(l=8, r=18, t=16, b=8),
+        legend=dict(
+            title=None,
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="left",
+            x=0,
+        ),
+    )
+    fig.update_xaxes(
+        showgrid=True,
+        gridcolor="rgba(148,163,184,0.12)",
+        zeroline=False,
+        title_font=dict(color="#94a3b8"),
+        tickfont=dict(color="#cbd5e1"),
+    )
+    fig.update_yaxes(
+        showgrid=False,
+        zeroline=False,
+        title_font=dict(color="#94a3b8"),
+        tickfont=dict(color="#cbd5e1"),
+    )
+    return fig
+
+
+def render_horizontal_ranking(
+    df: pd.DataFrame,
+    label_col: str,
+    value_col: str,
+    height: int = 420,
+    max_rows: int = 12,
+    axis_title: str = "Clients affectés",
+) -> None:
+    if df is None or df.empty or label_col not in df.columns or value_col not in df.columns:
+        st.info("Aucune donnée disponible selon les filtres actuels.")
+        return
+
+    chart_df = df.sort_values(value_col, ascending=False).head(max_rows).sort_values(value_col)
+    fig = px.bar(
+        chart_df,
+        x=value_col,
+        y=label_col,
+        orientation="h",
+        text=value_col,
+        color_discrete_sequence=[ACCENT_COLOR],
+        labels={value_col: axis_title, label_col: ""},
+    )
+    fig.update_traces(
+        texttemplate="%{text:,.0f}",
+        textposition="outside",
+        cliponaxis=False,
+        hovertemplate=f"%{{y}}<br>{axis_title}: %{{x:,.0f}}<extra></extra>",
+    )
+    fig = clean_chart_layout(fig, height=height)
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+
+
+def render_clean_map(
+    df: pd.DataFrame,
+    height: int = 650,
+    max_points: int | None = None,
+) -> None:
+    geo = get_geo(df)
+    if geo.empty:
+        st.warning("Aucune coordonnée valide selon les filtres actuels.")
+        return
+
+    geo = geo.copy()
+    if max_points is not None and len(geo) > max_points:
+        if "customers_affected" in geo.columns:
+            geo = geo.sort_values("customers_affected", ascending=False).head(max_points)
+        else:
+            geo = geo.head(max_points)
+        st.caption(f"Carte limitée aux {len(geo):,} observations les plus importantes.")
+
+    geo["taille"] = (
+        pd.to_numeric(geo["customers_affected"], errors="coerce").fillna(1).clip(lower=1)
+        if "customers_affected" in geo.columns
+        else 1
+    )
+    cause_col = get_cause_column(geo)
+    hover_cols = [
+        "customers_affected",
+        "municipality_label",
+        "mrc_name",
+        "region_name",
+        "status_fr",
+        cause_col,
+        "captured_at",
+        "active_capture_at",
+        "start_time",
+        "estimated_restore",
+    ]
+    hover_cols = [col for col in hover_cols if col and col in geo.columns]
+
+    fig = px.scatter_map(
+        geo,
+        lat="lat",
+        lon="lon",
+        size="taille",
+        color=cause_col,
+        color_discrete_map=CAUSE_COLORS,
+        hover_data=hover_cols,
+        zoom=5,
+        height=height,
+        labels={
+            "analysis_cause_label_fr": "Cause",
+            "history_cause_label_fr": "Cause",
+            "latest_raw_cause_label_fr": "Cause",
+            "taille": "Clients affectés",
+        },
+    )
+    fig.update_layout(
+        template=PLOT_TEMPLATE,
+        map_style="open-street-map",
+        paper_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=0, r=0, t=5, b=0),
+        legend=dict(
+            title=None,
+            orientation="h",
+            yanchor="bottom",
+            y=1.01,
+            xanchor="left",
+            x=0,
+            font=dict(size=10),
+        ),
+    )
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+
+
+def render_priority_list(df: pd.DataFrame, rows: int = 6) -> None:
+    """Render a compact priority list without Markdown interpreting HTML as code."""
+    if df is None or df.empty:
+        st.info("Aucune panne à afficher selon les filtres actuels.")
+        return
+
+    ordered = df.copy()
+    if "customers_affected" in ordered.columns:
+        ordered = ordered.sort_values("customers_affected", ascending=False)
+
+    items: list[str] = []
+    for _, row in ordered.head(rows).iterrows():
+        municipality = html.escape(
+            str(row.get("municipality_label", "Municipalité non disponible"))
+        )
+        region = html.escape(str(row.get("region_name", "Région non disponible")))
+        cause = html.escape(
+            str(
+                row.get(
+                    "analysis_cause_label_fr",
+                    row.get("history_cause_label_fr", "Cause non disponible"),
+                )
+            )
+        )
+        customers = html.escape(format_int(row.get("customers_affected", 0)))
+
+        # Garder chaque bloc sur une seule ligne évite que Markdown transforme
+        # les balises indentées en bloc de code.
+        items.append(
+            '<div class="priority-row">'
+            '<div>'
+            f'<div class="priority-name">{municipality}</div>'
+            f'<div class="priority-meta">{region} · {cause}</div>'
+            '</div>'
+            f'<div class="priority-value">{customers}</div>'
+            '</div>'
+        )
+
+    priority_html = '<div class="priority-list">' + ''.join(items) + '</div>'
+    st.markdown(priority_html, unsafe_allow_html=True)
+
+
+def active_filter_summary() -> str:
+    labels = []
+    if min_customers > 0:
+        labels.append(f"≥ {format_int(min_customers)} clients")
+    if major_only:
+        labels.append("pannes majeures seulement")
+    if not include_unknown:
+        labels.append("causes connues seulement")
+    if selected_regions:
+        labels.append(f"{len(selected_regions)} région(s)")
+    if selected_mrcs:
+        labels.append(f"{len(selected_mrcs)} MRC")
+    if selected_municipalities:
+        labels.append(f"{len(selected_municipalities)} municipalité(s)")
+    if selected_causes:
+        labels.append(f"{len(selected_causes)} cause(s)")
+    return " · ".join(labels) if labels else "Aucun filtre actif"
+
+
+# =============================================================================
+# Chargement des données
 # =============================================================================
 
 DATA_SOURCE = "Supabase" if using_supabase() else "CSV"
 
 if using_supabase():
-    # Chargement rapide au démarrage : on ne charge pas l'historique brut ici.
-    # L'historique est chargé seulement si l'utilisateur active l'option dans la sidebar.
     active = add_display_columns(load_supabase_active())
     latest = add_display_columns(load_supabase_latest())
     daily = load_supabase_daily_summary()
@@ -1034,10 +1522,20 @@ else:
     raw = add_display_columns(load_csv(RAW_FILE))
     history_all = enrich_raw_history(raw, latest)
 
+if active.empty or latest.empty:
+    st.error(
+        "Les tables de pannes actives sont manquantes. Exécute d’abord "
+        "`python scripts/build_warehouse.py` puis `python scripts/export_tables.py`."
+    )
+    st.stop()
+
 if not quality.empty:
     if "check_name" in quality.columns:
         quality["check_name_fr"] = quality["check_name"].apply(
             lambda x: translate_text(x, CHECK_TRANSLATIONS, default=str(x))
+        )
+        quality["description_fr"] = quality["check_name"].map(QUALITY_DESCRIPTION_FR).fillna(
+            quality.get("description", "")
         )
     if "severity" in quality.columns:
         quality["severity_fr"] = quality["severity"].apply(
@@ -1048,370 +1546,326 @@ if not quality.empty:
             lambda x: translate_text(x, QUALITY_TRANSLATIONS, default=str(x))
         )
 
-if active.empty or latest.empty or daily.empty:
-    st.error(
-        "Les fichiers analytiques sont manquants. Exécute d’abord "
-        "`python scripts/build_warehouse.py` puis `python scripts/export_tables.py`."
-    )
-    st.stop()
-
 
 # =============================================================================
-# Sidebar
+# Navigation et chargement historique conditionnel
 # =============================================================================
 
-st.sidebar.markdown("## ⚡ Hydro-Québec")
-st.sidebar.caption("Dashboard BI des pannes électriques au Québec")
-st.sidebar.caption(f"Source de données : {DATA_SOURCE}")
+st.sidebar.markdown("## ⚡ Pannes Québec")
+st.sidebar.caption("Suivi opérationnel et analytique")
+
+PAGE_OPTIONS = [
+    "Vue d’ensemble",
+    "Explorer la carte",
+    "Analyse territoriale",
+    "Causes",
+    "Surveillance",
+    "Qualité des données",
+    "Données",
+]
+
+page = st.sidebar.radio(
+    "Navigation",
+    PAGE_OPTIONS,
+    label_visibility="collapsed",
+    key="navigation_page",
+)
+
+st.sidebar.divider()
+st.sidebar.caption(f"Source : {DATA_SOURCE}")
 
 selected_map_mode = st.session_state.get("map_mode", "Situation actuelle")
-history_needed_by_map = selected_map_mode in {
-    "Date et heure précises",
-    "Période historique",
-}
-load_history_views = False
+history_needed_by_map = page == "Explorer la carte" and selected_map_mode != "Situation actuelle"
+preload_history = False
 
 if using_supabase():
     preload_history = st.sidebar.toggle(
-        "Précharger l'historique",
+        "Précharger l’historique",
         value=False,
-        help=(
-            "L'historique se charge automatiquement lorsque tu sélectionnes "
-            "un mode historique dans l'onglet Carte des pannes. Active cette "
-            "option pour le rendre aussi disponible dans l'onglet Données."
-        ),
+        help="Utile pour les modes historiques de la carte ou pour télécharger l’historique.",
+        key="preload_history",
     )
-    load_history_views = preload_history or history_needed_by_map
-
-    if load_history_views:
-        loading_reason = (
-            "chargé automatiquement pour la carte"
-            if history_needed_by_map and not preload_history
-            else "préchargé"
-        )
-        st.sidebar.info(
-            f"Historique {loading_reason} : derniers {get_supabase_history_days()} jours, "
-            f"maximum {get_supabase_history_rows_limit():,} lignes."
-        )
 
 if st.sidebar.button("Rafraîchir les données", width="stretch"):
     st.cache_data.clear()
     st.rerun()
 
-st.sidebar.divider()
-
-major_threshold = st.sidebar.number_input(
-    "Seuil de panne majeure",
-    min_value=1,
-    max_value=50000,
-    value=1000,
-    step=100,
-)
-
-max_customers = int(active["customers_affected"].max()) if "customers_affected" in active.columns else 1
-max_customers = max(max_customers, 1)
-
-min_customers = st.sidebar.slider(
-    "Clients affectés minimum",
-    min_value=0,
-    max_value=max_customers,
-    value=0,
-    step=1,
-)
-
-major_only = st.sidebar.toggle("Seulement les pannes majeures", value=False)
-include_unknown = st.sidebar.toggle("Inclure les causes inconnues", value=True)
-
-st.sidebar.divider()
-st.sidebar.markdown("### Filtres géographiques")
-
-region_options = sorted(active["region_name"].dropna().astype(str).unique()) if "region_name" in active else []
-selected_regions = st.sidebar.multiselect("Région administrative", region_options)
-
-mrc_options = sorted(active["mrc_name"].dropna().astype(str).unique()) if "mrc_name" in active else []
-selected_mrcs = st.sidebar.multiselect("MRC", mrc_options)
-
-municipality_options = sorted(active["municipality_label"].dropna().astype(str).unique()) if "municipality_label" in active else []
-selected_municipalities = st.sidebar.multiselect("Municipalité", municipality_options)
-
-st.sidebar.divider()
-st.sidebar.markdown("### Filtres opérationnels")
-
-cause_options = sorted(active["analysis_cause_label_fr"].dropna().astype(str).unique()) if "analysis_cause_label_fr" in active else []
-selected_causes = st.sidebar.multiselect("Cause", cause_options)
-
-
-# Chargement optionnel de l'historique Supabase.
-# Important : Streamlit exécute le code de tous les onglets à chaque rerun.
-# On évite donc de charger l'historique au démarrage.
-if using_supabase() and load_history_views:
-    with st.spinner("Chargement de l'historique Supabase..."):
+if using_supabase() and (preload_history or history_needed_by_map):
+    with st.spinner("Chargement de l’historique Supabase..."):
         history_all = add_display_columns(load_supabase_history())
+
+filter_source = active.copy()
+if not history_all.empty:
+    filter_source = pd.concat([active, history_all], ignore_index=True, sort=False)
+
+
+def reset_filter_state() -> None:
+    keys = [
+        "filter_major_threshold",
+        "filter_min_customers",
+        "filter_major_only",
+        "filter_include_unknown",
+        "filter_regions",
+        "filter_mrcs",
+        "filter_municipalities",
+        "filter_causes",
+    ]
+    for key in keys:
+        st.session_state.pop(key, None)
+
+
+with st.sidebar.expander("Filtres", expanded=True):
+    major_threshold = st.number_input(
+        "Seuil de panne majeure",
+        min_value=1,
+        max_value=50000,
+        value=1000,
+        step=100,
+        key="filter_major_threshold",
+    )
+
+    max_customers = int(pd.to_numeric(active.get("customers_affected", pd.Series([1])), errors="coerce").max())
+    max_customers = max(max_customers, 1)
+
+    min_customers = st.slider(
+        "Clients affectés minimum",
+        min_value=0,
+        max_value=max_customers,
+        value=0,
+        step=1,
+        key="filter_min_customers",
+    )
+    major_only = st.toggle("Pannes majeures seulement", value=False, key="filter_major_only")
+    include_unknown = st.toggle("Inclure les causes inconnues", value=True, key="filter_include_unknown")
+
+    region_options = (
+        sorted(filter_source["region_name"].dropna().astype(str).unique())
+        if "region_name" in filter_source.columns
+        else []
+    )
+    selected_regions = st.multiselect("Région", region_options, key="filter_regions")
+
+    mrc_options = (
+        sorted(filter_source["mrc_name"].dropna().astype(str).unique())
+        if "mrc_name" in filter_source.columns
+        else []
+    )
+    selected_mrcs = st.multiselect("MRC", mrc_options, key="filter_mrcs")
+
+    municipality_options = (
+        sorted(filter_source["municipality_label"].dropna().astype(str).unique())
+        if "municipality_label" in filter_source.columns
+        else []
+    )
+    selected_municipalities = st.multiselect(
+        "Municipalité",
+        municipality_options,
+        key="filter_municipalities",
+    )
+
+    cause_values = []
+    for candidate in ["analysis_cause_label_fr", "history_cause_label_fr"]:
+        if candidate in filter_source.columns:
+            cause_values.extend(filter_source[candidate].dropna().astype(str).tolist())
+    selected_causes = st.multiselect(
+        "Cause",
+        sorted(set(cause_values)),
+        key="filter_causes",
+    )
+
+    st.button("Réinitialiser les filtres", on_click=reset_filter_state, width="stretch")
 
 
 # =============================================================================
-# Filtres actifs
+# Application des filtres actifs
 # =============================================================================
 
 filtered = active.copy()
 
 if "customers_affected" in filtered.columns:
-    filtered = filtered[filtered["customers_affected"].fillna(0) >= min_customers]
-
+    filtered = filtered[pd.to_numeric(filtered["customers_affected"], errors="coerce").fillna(0) >= min_customers]
 if major_only and "customers_affected" in filtered.columns:
-    filtered = filtered[filtered["customers_affected"].fillna(0) >= major_threshold]
-
+    filtered = filtered[pd.to_numeric(filtered["customers_affected"], errors="coerce").fillna(0) >= major_threshold]
 if not include_unknown and "analysis_cause_label_fr" in filtered.columns:
     filtered = filtered[filtered["analysis_cause_label_fr"] != "Inconnue"]
-
 if selected_regions and "region_name" in filtered.columns:
     filtered = filtered[filtered["region_name"].isin(selected_regions)]
-
 if selected_mrcs and "mrc_name" in filtered.columns:
     filtered = filtered[filtered["mrc_name"].isin(selected_mrcs)]
-
 if selected_municipalities and "municipality_label" in filtered.columns:
     filtered = filtered[filtered["municipality_label"].isin(selected_municipalities)]
-
 if selected_causes and "analysis_cause_label_fr" in filtered.columns:
     filtered = filtered[filtered["analysis_cause_label_fr"].isin(selected_causes)]
 
-
-# =============================================================================
-# Header
-# =============================================================================
-
 updated_at = latest_timestamp(active, latest)
+updated_display = format_quebec_datetime(updated_at)
 
 st.markdown(
     f"""
-<div class="hero">
-    <div class="hero-title">⚡ Suivi automatisé des pannes électriques au Québec</div>
-    <div class="hero-subtitle">
-        Tableau de bord interactif pour analyser les pannes observées, les clients affectés,
-        les causes, les régions touchées, l’historique et la qualité du pipeline de données.
+    <div class="app-header">
+        <div>
+            <div class="app-title">⚡ Suivi des pannes électriques</div>
+            <div class="app-subtitle">Québec · vue opérationnelle et historique</div>
+        </div>
+        <div class="app-meta">
+            <span class="badge badge-accent">{html.escape(DATA_SOURCE)}</span>
+            <span class="badge">Mise à jour : {html.escape(updated_display)}</span>
+        </div>
     </div>
-    <div class="muted" style="margin-top:0.8rem;">
-        Dernière mise à jour observée — heure du Québec : <strong>{format_quebec_datetime(updated_at)}</strong>
-    </div>
-</div>
-""",
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    f'<div class="filter-summary">Filtres : {html.escape(active_filter_summary())}</div>',
     unsafe_allow_html=True,
 )
 
 
 # =============================================================================
-# KPIs globaux
+# Vue d’ensemble
 # =============================================================================
 
-active_count = len(filtered)
-customers_sum = filtered["customers_affected"].sum() if "customers_affected" in filtered else 0
-municipality_count = filtered["municipality_label"].nunique() if "municipality_label" in filtered else 0
-region_count = filtered["region_name"].nunique() if "region_name" in filtered else 0
-major_count = filtered[filtered["customers_affected"] >= major_threshold].shape[0] if "customers_affected" in filtered else 0
-known_cause = bool_rate(filtered["has_known_cause"]) if "has_known_cause" in filtered else 0
-
-m1, m2, m3, m4, m5, m6 = st.columns(6)
-m1.metric("Pannes actives", format_int(active_count))
-m2.metric("Clients affectés", format_int(customers_sum))
-m3.metric("Municipalités", format_int(municipality_count))
-m4.metric("Régions", format_int(region_count))
-m5.metric("Pannes majeures", format_int(major_count))
-m6.metric("Causes connues", format_pct(known_cause))
-
-
-# =============================================================================
-# Onglets
-# =============================================================================
-
-tab_overview, tab_map, tab_geo, tab_causes, tab_watch, tab_quality, tab_data = st.tabs(
-    [
+if page == "Vue d’ensemble":
+    render_page_header(
+        "Synthèse",
         "Vue d’ensemble",
-        "Carte des pannes",
-        "Analyse géographique",
-        "Causes",
-        "Surveillance",
-        "Qualité & limites",
-        "Données",
-    ]
-)
+        "Les indicateurs les plus utiles pour comprendre rapidement l’ampleur et la concentration des pannes actives.",
+    )
 
+    active_count = unique_outage_count(filtered)
+    customers_sum = safe_numeric_sum(filtered, "customers_affected")
+    municipality_count = filtered["municipality_label"].nunique() if "municipality_label" in filtered.columns else 0
+    major_count = (
+        unique_outage_count(filtered[pd.to_numeric(filtered["customers_affected"], errors="coerce").fillna(0) >= major_threshold])
+        if "customers_affected" in filtered.columns
+        else 0
+    )
 
-# =============================================================================
-# Vue d'ensemble
-# =============================================================================
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Pannes actives", format_int(active_count))
+    k2.metric("Clients affectés", format_int(customers_sum))
+    k3.metric("Municipalités touchées", format_int(municipality_count))
+    k4.metric("Pannes majeures", format_int(major_count))
 
-with tab_overview:
-    st.header("Vue d’ensemble")
-    st.caption("Synthèse rapide des pannes actives, des régions touchées et des principales zones à surveiller.")
-
-    left, right = st.columns([1.45, 1])
+    left, right = st.columns([1.35, 1], gap="large")
 
     with left:
-        with st.container(border=True):
-            st.subheader("Répartition des clients affectés par région")
-
-            if "region_name" in filtered.columns and "customers_affected" in filtered.columns and not filtered.empty:
-                region = (
-                    filtered.groupby("region_name", as_index=False)
-                    .agg(
-                        clients_affectes=("customers_affected", "sum"),
-                        pannes=("outage_id", "nunique"),
-                    )
-                    .sort_values("clients_affectes", ascending=True)
-                )
-
-                fig = px.bar(
-                    region,
-                    x="clients_affectes",
-                    y="region_name",
-                    orientation="h",
-                    text="clients_affectes",
-                    title="Régions les plus touchées",
-                    labels={
-                        "clients_affectes": "Clients affectés",
-                        "region_name": "Région",
-                    },
-                )
-                fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside", cliponaxis=False)
-                fig = apply_common_layout(fig, height=430)
-                st.plotly_chart(fig, width="stretch")
-            else:
-                st.info("Aucune donnée régionale selon les filtres.")
+        render_section_header("Clients affectés par région", "Top 10")
+        if {"region_name", "customers_affected"}.issubset(filtered.columns) and not filtered.empty:
+            region_summary = (
+                filtered.groupby("region_name", as_index=False)
+                .agg(clients_affectes=("customers_affected", "sum"))
+                .sort_values("clients_affectes", ascending=False)
+            )
+            render_horizontal_ranking(
+                region_summary,
+                "region_name",
+                "clients_affectes",
+                height=430,
+                max_rows=10,
+            )
+        else:
+            st.info("Aucune donnée régionale selon les filtres actuels.")
 
     with right:
-        with st.container(border=True):
-            st.subheader("Top municipalités")
+        render_section_header("Priorités actuelles", "Clients affectés")
+        render_priority_list(filtered, rows=7)
 
-            if "municipality_label" in filtered.columns and "customers_affected" in filtered.columns and not filtered.empty:
-                top_mun = (
-                    filtered.groupby(["municipality_label", "region_name"], as_index=False, dropna=False)
-                    .agg(
-                        clients_affectes=("customers_affected", "sum"),
-                        pannes=("outage_id", "nunique"),
-                    )
-                    .sort_values("clients_affectes", ascending=False)
-                    .head(10)
-                )
+    if not daily.empty and {"date", "max_customers_affected"}.issubset(daily.columns):
+        render_section_header("Évolution récente", "Maximum quotidien de clients affectés")
+        trend = daily.dropna(subset=["date"]).sort_values("date").tail(45).copy()
+        fig = px.line(
+            trend,
+            x="date",
+            y="max_customers_affected",
+            markers=True,
+            color_discrete_sequence=[ACCENT_COLOR],
+            labels={"date": "Date", "max_customers_affected": "Clients affectés"},
+        )
+        fig.update_traces(line=dict(width=2.5), marker=dict(size=5))
+        fig = clean_chart_layout(fig, height=350)
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
-                fig = px.bar(
-                    top_mun.sort_values("clients_affectes"),
-                    x="clients_affectes",
-                    y="municipality_label",
-                    orientation="h",
-                    text="clients_affectes",
-                    hover_data=["region_name", "pannes"],
-                    title="Municipalités par clients affectés",
-                    labels={
-                        "clients_affectes": "Clients affectés",
-                        "municipality_label": "Municipalité",
-                        "region_name": "Région",
-                        "pannes": "Pannes",
-                    },
-                )
-                fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside", cliponaxis=False)
-                fig = apply_common_layout(fig, height=430)
-                st.plotly_chart(fig, width="stretch")
-            else:
-                st.info("Aucune municipalité selon les filtres.")
-
-    with st.container(border=True):
-        st.subheader("Pannes actives prioritaires")
-
-        priority_cols = [
-            "customers_affected",
-            "municipality_label",
-            "region_name",
-            "mrc_name",
-            "analysis_cause_label_fr",
-            "status_fr",
-            "active_capture_at",
-            "first_capture_at",
-            "observed_duration_hours",
-            "estimated_restore",
-        ]
-
-        priority = filtered.sort_values("customers_affected", ascending=False) if "customers_affected" in filtered else filtered
-        show_table(priority.head(15), priority_cols, height=420)
+    render_section_header("Pannes prioritaires", "15 premières")
+    priority_cols = [
+        "customers_affected",
+        "municipality_label",
+        "region_name",
+        "mrc_name",
+        "analysis_cause_label_fr",
+        "status_fr",
+        "observed_duration_hours",
+        "estimated_restore",
+    ]
+    priority_table = (
+        filtered.sort_values("customers_affected", ascending=False)
+        if "customers_affected" in filtered.columns
+        else filtered
+    )
+    show_table(priority_table.head(15), priority_cols, height=480)
 
 
 # =============================================================================
-# Carte des pannes — actuelle, date précise ou période historique
+# Explorateur cartographique
 # =============================================================================
 
-with tab_map:
-    st.header("Carte des pannes")
-    st.caption(
-        "Une seule carte pour explorer la situation actuelle, une date précise "
-        "ou une période historique. Les filtres de la barre latérale s'appliquent "
-        "à la vue sélectionnée."
+elif page == "Explorer la carte":
+    render_page_header(
+        "Exploration",
+        "Carte des pannes",
+        "Une seule carte pour consulter la situation actuelle, une capture précise ou une période historique.",
     )
 
     map_mode = st.radio(
-        "Période à afficher",
-        [
-            "Situation actuelle",
-            "Date et heure précises",
-            "Période historique",
-        ],
+        "Temporalité",
+        ["Situation actuelle", "Date et heure précises", "Période historique"],
         horizontal=True,
         key="map_mode",
     )
 
     map_data = pd.DataFrame()
-    map_title = "Pannes électriques"
-    map_context = ""
-    map_max_points = None
-    download_filename = "pannes_carte.csv"
+    map_display_data = pd.DataFrame()
+    context = ""
+    max_map_points = None
+    download_name = "pannes_carte.csv"
 
     if map_mode == "Situation actuelle":
         map_data = filtered.copy()
-        map_title = "Pannes actives géolocalisées"
-        map_context = (
-            f"Dernière mise à jour observée : "
-            f"{format_quebec_datetime(updated_at)}"
-        )
-        download_filename = "pannes_actives_carte.csv"
+        map_display_data = map_data.copy()
+        context = f"Situation observée le {updated_display}."
+        download_name = "pannes_actives_carte.csv"
 
     elif history_all.empty:
         st.info(
-            "L'historique n'est pas chargé. Active `Charger les vues historiques` "
-            "dans la barre latérale pour utiliser ce mode."
+            "L’historique n’est pas encore chargé. La page se recharge automatiquement après la sélection d’un mode historique. "
+            "Sur Supabase, tu peux aussi activer « Précharger l’historique » dans la barre latérale."
         )
 
     elif "captured_at" not in history_all.columns:
-        st.error("La colonne `captured_at` est manquante dans l'historique brut.")
+        st.error("La colonne `captured_at` est absente de l’historique.")
 
     else:
-        history_map_source = history_all.dropna(subset=["captured_at"]).copy()
+        history_source = history_all.dropna(subset=["captured_at"]).copy()
 
-        if history_map_source.empty:
-            st.warning("Aucune observation historique disponible.")
-
-        elif map_mode == "Date et heure précises":
-            # Arrondir en UTC évite les ambiguïtés pendant le changement
-            # d'heure, puis les valeurs sont reconverties vers le Québec.
+        if map_mode == "Date et heure précises":
             available_batches = (
-                history_map_source["captured_at"]
+                history_source["captured_at"]
                 .dt.tz_convert("UTC")
                 .dt.floor("min")
                 .dt.tz_convert(QUEBEC_TIMEZONE)
-                .dropna()
                 .drop_duplicates()
                 .sort_values()
                 .tolist()
             )
 
-            if not available_batches:
-                st.warning("Aucune capture historique disponible.")
-            else:
+            if available_batches:
                 min_dt = ensure_quebec_timestamp(available_batches[0])
                 max_dt = ensure_quebec_timestamp(available_batches[-1])
-
-                c1, c2, c3 = st.columns([1, 1, 1])
+                c1, c2, c3 = st.columns([1, 1, 1.15])
                 with c1:
                     requested_date = st.date_input(
-                        "Date souhaitée",
+                        "Date",
                         value=max_dt.date(),
                         min_value=min_dt.date(),
                         max_value=max_dt.date(),
@@ -1419,13 +1873,13 @@ with tab_map:
                     )
                 with c2:
                     requested_time = st.time_input(
-                        "Heure souhaitée — heure du Québec",
+                        "Heure du Québec",
                         value=max_dt.time().replace(tzinfo=None, microsecond=0),
                         key="map_requested_time",
                     )
                 with c3:
                     window_minutes = st.slider(
-                        "Fenêtre de capture, minutes",
+                        "Tolérance autour de la capture",
                         min_value=1,
                         max_value=30,
                         value=5,
@@ -1433,531 +1887,400 @@ with tab_map:
                         key="map_window_minutes",
                     )
 
-                requested_dt = pd.Timestamp(
-                    datetime.combine(requested_date, requested_time)
-                ).tz_localize(
+                requested_dt = pd.Timestamp(datetime.combine(requested_date, requested_time)).tz_localize(
                     QUEBEC_TIMEZONE,
                     ambiguous=False,
                     nonexistent="shift_forward",
                 )
-
-                nearest_batch = min(
-                    available_batches,
-                    key=lambda value: abs(pd.Timestamp(value) - requested_dt),
+                nearest_batch = ensure_quebec_timestamp(
+                    min(available_batches, key=lambda value: abs(pd.Timestamp(value) - requested_dt))
                 )
-                nearest_batch = ensure_quebec_timestamp(nearest_batch)
                 gap_minutes = abs((nearest_batch - requested_dt).total_seconds()) / 60
-
-                raw_snapshot = build_active_snapshot_at_time(
-                    history_map_source,
-                    selected_capture_at=nearest_batch,
-                    window_minutes=window_minutes,
+                snapshot = build_active_snapshot_at_time(history_source, nearest_batch, window_minutes)
+                map_data = apply_global_filters_to_history(snapshot)
+                map_display_data = map_data.copy()
+                context = (
+                    f"Capture la plus proche : {format_quebec_datetime(nearest_batch)} · "
+                    f"écart {gap_minutes:.1f} min · fenêtre ±{window_minutes} min."
                 )
-                map_data = apply_global_filters_to_history(raw_snapshot)
-                map_title = "Pannes observées au moment sélectionné"
-                map_context = (
-                    f"Moment demandé : {format_quebec_datetime(requested_dt)} · "
-                    f"capture la plus proche : {format_quebec_datetime(nearest_batch)} · "
-                    f"écart : {gap_minutes:.1f} min · fenêtre : ±{window_minutes} min"
-                )
-                download_filename = "snapshot_historique_pannes.csv"
+                download_name = "snapshot_historique_pannes.csv"
+            else:
+                st.warning("Aucune capture historique disponible.")
 
         else:
-            min_date = history_map_source["captured_at"].min().date()
-            max_date = history_map_source["captured_at"].max().date()
-
+            min_date = history_source["captured_at"].min().date()
+            max_date = history_source["captured_at"].max().date()
             c1, c2 = st.columns([1.4, 1])
             with c1:
                 selected_dates = st.date_input(
-                    "Période historique",
+                    "Période",
                     value=(min_date, max_date),
                     min_value=min_date,
                     max_value=max_date,
                     key="map_history_period",
                 )
             with c2:
-                map_max_points = st.slider(
-                    "Points maximum sur la carte",
+                max_map_points = st.slider(
+                    "Points maximum",
                     min_value=500,
                     max_value=50000,
                     value=12000,
                     step=500,
-                    key="map_max_history_points",
+                    key="map_history_max_points",
                 )
 
             if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
                 start_date, end_date = selected_dates
-                map_data = history_map_source[
-                    (history_map_source["captured_at"].dt.date >= start_date)
-                    & (history_map_source["captured_at"].dt.date <= end_date)
+                period_data = history_source[
+                    (history_source["captured_at"].dt.date >= start_date)
+                    & (history_source["captured_at"].dt.date <= end_date)
                 ].copy()
-                map_data = apply_global_filters_to_history(map_data)
-                map_title = "Observations historiques de pannes"
-                map_context = (
-                    f"Période affichée : {start_date:%Y-%m-%d} au {end_date:%Y-%m-%d} · "
-                    "heures présentées dans le fuseau du Québec"
+                period_data = apply_global_filters_to_history(period_data)
+                map_data = period_data
+                map_display_data = representative_outages(period_data)
+                context = (
+                    f"Période du {start_date:%Y-%m-%d} au {end_date:%Y-%m-%d}. "
+                    "Un point représentatif est affiché par panne afin d’éviter les doublons de capture."
                 )
-                download_filename = "historique_pannes_filtre.csv"
+                download_name = "historique_pannes_filtre.csv"
 
-    if map_context:
-        st.markdown(
-            f"<div class='small-note'>{map_context}</div>",
-            unsafe_allow_html=True,
-        )
+    if context:
+        render_status(context, "good")
 
-    if not map_data.empty:
-        unique_outages = (
-            map_data["outage_id"].nunique()
-            if "outage_id" in map_data.columns
-            else len(map_data)
+    if not map_display_data.empty:
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Pannes uniques", format_int(unique_outage_count(map_display_data)))
+        k2.metric("Clients représentés", format_int(safe_numeric_sum(map_display_data, "customers_affected")))
+        k3.metric(
+            "Municipalités",
+            format_int(map_display_data["municipality_label"].nunique() if "municipality_label" in map_display_data.columns else 0),
         )
-        clients_total = (
-            map_data["customers_affected"].sum()
-            if "customers_affected" in map_data.columns
-            else 0
-        )
-        municipalities = (
-            map_data["municipality_label"].nunique()
-            if "municipality_label" in map_data.columns
-            else 0
-        )
-        regions = (
-            map_data["region_name"].nunique()
-            if "region_name" in map_data.columns
-            else 0
-        )
-        major_outages = (
-            map_data[map_data["customers_affected"].fillna(0) >= major_threshold]["outage_id"].nunique()
-            if {"customers_affected", "outage_id"}.issubset(map_data.columns)
-            else 0
-        )
-        mapped_points = len(get_geo(map_data))
+        k4.metric("Points géocodés", format_int(len(get_geo(map_display_data))))
 
-        k1, k2, k3, k4, k5, k6 = st.columns(6)
-        k1.metric("Pannes uniques", format_int(unique_outages))
-        k2.metric("Clients affectés", format_int(clients_total))
-        k3.metric("Municipalités", format_int(municipalities))
-        k4.metric("Régions", format_int(regions))
-        k5.metric("Pannes majeures", format_int(major_outages))
-        k6.metric("Points carte", format_int(mapped_points))
-
-        map_col, side_col = st.columns([1.6, 1])
-
+        map_col, side_col = st.columns([1.65, 0.85], gap="large")
         with map_col:
-            render_outage_map(
-                map_data,
-                title=map_title,
-                height=720,
-                max_points=map_max_points,
-            )
+            render_section_header("Carte", "Taille des points : clients affectés")
+            render_clean_map(map_display_data, height=660, max_points=max_map_points)
 
         with side_col:
-            with st.container(border=True):
-                st.subheader("Top municipalités")
-                if {"municipality_label", "customers_affected"}.issubset(map_data.columns):
-                    group_cols = ["municipality_label"]
-                    if "region_name" in map_data.columns:
-                        group_cols.append("region_name")
+            render_section_header("Municipalités les plus touchées", "Top 8")
+            if {"municipality_label", "customers_affected"}.issubset(map_display_data.columns):
+                top_mun = (
+                    map_display_data.groupby("municipality_label", as_index=False)
+                    .agg(clients_affectes=("customers_affected", "sum"))
+                    .sort_values("clients_affectes", ascending=False)
+                )
+                render_horizontal_ranking(
+                    top_mun,
+                    "municipality_label",
+                    "clients_affectes",
+                    height=420,
+                    max_rows=8,
+                )
 
-                    top_municipalities = (
-                        map_data.groupby(group_cols, as_index=False, dropna=False)
-                        .agg(
-                            clients_affectes=("customers_affected", "sum"),
-                            pannes=("outage_id", "nunique")
-                            if "outage_id" in map_data.columns
-                            else ("customers_affected", "size"),
-                        )
-                        .sort_values("clients_affectes", ascending=False)
-                        .head(10)
-                    )
+            render_section_header("Causes", "Répartition")
+            cause_col = get_cause_column(map_display_data)
+            if cause_col:
+                cause_summary = (
+                    map_display_data[cause_col]
+                    .fillna("Inconnue")
+                    .value_counts()
+                    .rename_axis("cause")
+                    .reset_index(name="pannes")
+                )
+                render_horizontal_ranking(
+                    cause_summary,
+                    "cause",
+                    "pannes",
+                    height=300,
+                    max_rows=7,
+                    axis_title="Pannes",
+                )
 
-                    fig = px.bar(
-                        top_municipalities.sort_values("clients_affectes"),
-                        x="clients_affectes",
-                        y="municipality_label",
-                        orientation="h",
-                        text="clients_affectes",
-                        hover_data=[col for col in ["region_name", "pannes"] if col in top_municipalities.columns],
-                        title="Municipalités les plus touchées",
-                        labels={
-                            "clients_affectes": "Clients affectés",
-                            "municipality_label": "Municipalité",
-                            "region_name": "Région",
-                            "pannes": "Pannes",
-                        },
-                    )
-                    fig.update_traces(
-                        texttemplate="%{text:,.0f}",
-                        textposition="outside",
-                        cliponaxis=False,
-                    )
-                    fig = apply_common_layout(fig, height=345)
-                    st.plotly_chart(fig, width="stretch")
-                else:
-                    st.info("Les données municipales ne sont pas disponibles.")
-
-            with st.container(border=True):
-                st.subheader("Causes")
-                cause_column = get_cause_column(map_data)
-                if cause_column:
-                    cause_summary = (
-                        map_data[cause_column]
-                        .fillna("Inconnue")
-                        .value_counts()
-                        .rename_axis("cause")
-                        .reset_index(name="pannes")
-                    )
-                    fig = px.bar(
-                        cause_summary.sort_values("pannes"),
-                        x="pannes",
-                        y="cause",
-                        orientation="h",
-                        text="pannes",
-                        title="Répartition des causes",
-                        labels={"pannes": "Pannes", "cause": "Cause"},
-                    )
-                    fig.update_traces(textposition="outside", cliponaxis=False)
-                    fig = apply_common_layout(fig, height=345)
-                    st.plotly_chart(fig, width="stretch")
-                else:
-                    st.info("Les causes ne sont pas disponibles.")
-
-        with st.container(border=True):
-            st.subheader("Pannes correspondant à la sélection")
-            table_columns = [
+        with st.expander("Voir les données de la carte", expanded=False):
+            table_cols = [
                 "customers_affected",
                 "municipality_label",
                 "mrc_name",
                 "region_name",
                 "status_fr",
-                get_cause_column(map_data),
+                get_cause_column(map_display_data),
                 "captured_at",
                 "active_capture_at",
                 "start_time",
                 "estimated_restore",
             ]
-            table_columns = [col for col in table_columns if col]
-            sorted_map_data = (
-                map_data.sort_values("customers_affected", ascending=False)
-                if "customers_affected" in map_data.columns
-                else map_data
+            table_cols = [col for col in table_cols if col]
+            table_data = (
+                map_display_data.sort_values("customers_affected", ascending=False)
+                if "customers_affected" in map_display_data.columns
+                else map_display_data
             )
-            show_table(sorted_map_data, table_columns, height=500)
-            make_download(
-                sorted_map_data,
-                "Télécharger les données de cette vue",
-                download_filename,
-            )
+            show_table(table_data, table_cols, height=520)
+            make_download(map_data, "Télécharger les données sélectionnées", download_name)
 
-        st.markdown(
-            "<div class='insight'>Les coordonnées correspondent aux points fournis par la source. "
-            "Elles facilitent l'analyse visuelle, mais ne représentent pas les limites exactes "
-            "d'une zone de panne.</div>",
-            unsafe_allow_html=True,
+
+# =============================================================================
+# Analyse territoriale
+# =============================================================================
+
+elif page == "Analyse territoriale":
+    render_page_header(
+        "Territoires",
+        "Analyse territoriale",
+        "Des classements simples pour comparer les régions, les MRC et les municipalités sans surcharge visuelle.",
+    )
+
+    analysis_level = st.radio(
+        "Niveau d’analyse",
+        ["Régions", "MRC", "Municipalités"],
+        horizontal=True,
+        key="territory_level",
+    )
+
+    config = {
+        "Régions": ("region_name", "Région"),
+        "MRC": ("mrc_name", "MRC"),
+        "Municipalités": ("municipality_label", "Municipalité"),
+    }
+    group_col, group_label = config[analysis_level]
+
+    if filtered.empty or group_col not in filtered.columns:
+        st.info("Aucune donnée territoriale selon les filtres actuels.")
+    else:
+        aggregations = {
+            "clients_affectes": ("customers_affected", "sum"),
+            "clients_max": ("customers_affected", "max"),
+        }
+        if "outage_id" in filtered.columns:
+            aggregations["pannes"] = ("outage_id", "nunique")
+
+        ranking = (
+            filtered.dropna(subset=[group_col])
+            .groupby(group_col, as_index=False)
+            .agg(**aggregations)
+            .sort_values("clients_affectes", ascending=False)
+        )
+        if "pannes" not in ranking.columns:
+            ranking["pannes"] = 0
+
+        top_name = ranking.iloc[0][group_col] if not ranking.empty else "—"
+        top_clients = ranking.iloc[0]["clients_affectes"] if not ranking.empty else 0
+        total_clients = ranking["clients_affectes"].sum() if not ranking.empty else 0
+        top3_share = (
+            ranking.head(3)["clients_affectes"].sum() / total_clients * 100
+            if total_clients > 0
+            else 0
         )
 
-    elif map_mode == "Situation actuelle":
-        st.warning("Aucune panne active ne correspond aux filtres actuels.")
+        k1, k2, k3 = st.columns(3)
+        k1.metric(f"{group_label} la plus touchée", str(top_name))
+        k2.metric("Clients dans ce territoire", format_int(top_clients))
+        k3.metric("Concentration des 3 premiers", format_pct(top3_share))
 
+        render_section_header(f"Clients affectés par {group_label.lower()}", "Classement décroissant")
+        render_horizontal_ranking(
+            ranking,
+            group_col,
+            "clients_affectes",
+            height=530,
+            max_rows=15,
+        )
 
-# =============================================================================
-# Analyse géographique
-# =============================================================================
-
-with tab_geo:
-    st.header("Analyse géographique")
-    st.caption("Lecture territoriale des pannes actives par région, MRC et municipalité.")
-
-    g1, g2 = st.columns(2)
-
-    with g1:
-        with st.container(border=True):
-            st.subheader("Part des clients affectés par région")
-
-            if "region_name" in filtered.columns and "customers_affected" in filtered.columns and not filtered.empty:
-                region = (
-                    filtered.groupby("region_name", as_index=False)
-                    .agg(clients_affectes=("customers_affected", "sum"))
-                    .sort_values("clients_affectes", ascending=False)
-                )
-
-                fig = px.treemap(
-                    region,
-                    path=["region_name"],
-                    values="clients_affectes",
-                    title="Poids relatif des régions touchées",
-                    labels={"clients_affectes": "Clients affectés"},
-                )
-                fig = apply_common_layout(fig, height=480)
-                st.plotly_chart(fig, width="stretch")
-
-    with g2:
-        with st.container(border=True):
-            st.subheader("Top MRC")
-
-            if "mrc_name" in filtered.columns and "customers_affected" in filtered.columns and not filtered.empty:
-                mrc = (
-                    filtered.groupby(["mrc_name", "region_name"], as_index=False, dropna=False)
-                    .agg(
-                        clients_affectes=("customers_affected", "sum"),
-                        pannes=("outage_id", "nunique"),
-                        municipalites=("municipality_label", "nunique"),
-                    )
-                    .sort_values("clients_affectes", ascending=False)
-                    .head(15)
-                )
-
-                fig = px.scatter(
-                    mrc,
-                    x="pannes",
-                    y="clients_affectes",
-                    size="municipalites",
-                    color="region_name",
-                    hover_name="mrc_name",
-                    title="MRC : volume de pannes vs clients affectés",
-                    labels={
-                        "pannes": "Pannes actives",
-                        "clients_affectes": "Clients affectés",
-                        "municipalites": "Municipalités",
-                        "region_name": "Région",
-                    },
-                )
-                fig = apply_common_layout(fig, height=480)
-                st.plotly_chart(fig, width="stretch")
-
-    with st.container(border=True):
-        st.subheader("Classement territorial")
-
-        if "municipality_label" in filtered.columns and "customers_affected" in filtered.columns:
-            geo_summary = (
-                filtered.groupby(["municipality_label", "mrc_name", "region_name"], as_index=False, dropna=False)
-                .agg(
-                    pannes=("outage_id", "nunique"),
-                    clients_affectes=("customers_affected", "sum"),
-                    clients_max=("customers_affected", "max"),
-                )
-                .sort_values("clients_affectes", ascending=False)
-            )
-
-            st.dataframe(
-                geo_summary.rename(
-                    columns={
-                        "municipality_label": "Municipalité",
-                        "mrc_name": "MRC",
-                        "region_name": "Région",
-                        "pannes": "Pannes",
-                        "clients_affectes": "Clients affectés",
-                        "clients_max": "Clients affectés max",
-                    }
-                ),
-                width="stretch",
-                height=520,
-                hide_index=True,
-            )
+        render_section_header("Classement détaillé", "Pannes et impact maximum")
+        detail = ranking.rename(
+            columns={
+                group_col: group_label,
+                "pannes": "Pannes",
+                "clients_affectes": "Clients affectés",
+                "clients_max": "Clients affectés max",
+            }
+        )
+        st.dataframe(detail, width="stretch", hide_index=True, height=min(600, 42 + 35 * min(len(detail), 16)))
 
 
 # =============================================================================
 # Causes
 # =============================================================================
 
-with tab_causes:
-    st.header("Causes")
-    st.caption("Analyse des causes connues et inconnues, avec distinction entre données disponibles et limites de la source.")
-
-    cause_df = latest.copy()
-
-    c1, c2 = st.columns([1.1, 1])
-
-    with c1:
-        with st.container(border=True):
-            st.subheader("Distribution des causes")
-
-            if "analysis_cause_label_fr" in cause_df.columns:
-                cause_summary = (
-                    cause_df["analysis_cause_label_fr"]
-                    .fillna("Inconnue")
-                    .value_counts()
-                    .rename_axis("cause")
-                    .reset_index(name="pannes")
-                )
-
-                fig = px.bar(
-                    cause_summary,
-                    x="pannes",
-                    y="cause",
-                    orientation="h",
-                    text="pannes",
-                    title="Nombre de pannes par cause",
-                    labels={"pannes": "Pannes", "cause": "Cause"},
-                )
-                fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside", cliponaxis=False)
-                fig.update_layout(yaxis={"categoryorder": "total ascending"})
-                fig = apply_common_layout(fig, height=500)
-                st.plotly_chart(fig, width="stretch")
-
-    with c2:
-        with st.container(border=True):
-            st.subheader("Causes connues seulement")
-
-            if "analysis_cause_label_fr" in cause_df.columns:
-                known = cause_df[cause_df["analysis_cause_label_fr"] != "Inconnue"]
-                known_summary = (
-                    known["analysis_cause_label_fr"]
-                    .value_counts()
-                    .rename_axis("cause")
-                    .reset_index(name="pannes")
-                )
-
-                if not known_summary.empty:
-                    fig = px.pie(
-                        known_summary,
-                        names="cause",
-                        values="pannes",
-                        hole=0.58,
-                        title="Répartition des causes connues",
-                    )
-                    fig = apply_common_layout(fig, height=500)
-                    st.plotly_chart(fig, width="stretch")
-                else:
-                    st.info("Aucune cause connue disponible.")
-
-    st.markdown(
-        "<div class='insight'>Une cause inconnue ne signifie pas une erreur du pipeline. "
-        "Elle indique que la source ne fournit pas toujours la cause au moment de la capture.</div>",
-        unsafe_allow_html=True,
+elif page == "Causes":
+    render_page_header(
+        "Origine",
+        "Causes des pannes",
+        "Lecture des causes disponibles dans la vue filtrée, avec séparation claire entre cause connue et information absente de la source.",
     )
+
+    cause_col = get_cause_column(filtered)
+    if filtered.empty or not cause_col:
+        st.info("Aucune information de cause disponible selon les filtres actuels.")
+    else:
+        cause_data = filtered.copy()
+        cause_data[cause_col] = cause_data[cause_col].fillna("Inconnue")
+        summary = (
+            cause_data.groupby(cause_col, as_index=False)
+            .agg(
+                pannes=("outage_id", "nunique") if "outage_id" in cause_data.columns else (cause_col, "size"),
+                clients_affectes=("customers_affected", "sum") if "customers_affected" in cause_data.columns else (cause_col, "size"),
+            )
+            .sort_values("pannes", ascending=False)
+        )
+
+        known_df = cause_data[cause_data[cause_col] != "Inconnue"]
+        known_rate = unique_outage_count(known_df) / max(unique_outage_count(cause_data), 1) * 100
+        unknown_count = unique_outage_count(cause_data[cause_data[cause_col] == "Inconnue"])
+        known_summary = summary[summary[cause_col] != "Inconnue"].sort_values("pannes", ascending=False)
+        top_known = known_summary.iloc[0][cause_col] if not known_summary.empty else "Non disponible"
+
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Causes connues", format_pct(known_rate))
+        k2.metric("Pannes sans cause fournie", format_int(unknown_count))
+        k3.metric("Cause connue principale", str(top_known))
+
+        left, right = st.columns([1.35, 0.85], gap="large")
+        with left:
+            render_section_header("Nombre de pannes par cause", "Vue filtrée")
+            render_horizontal_ranking(
+                summary,
+                cause_col,
+                "pannes",
+                height=500,
+                max_rows=10,
+                axis_title="Pannes",
+            )
+        with right:
+            render_section_header("Impact en clients", "Somme observée")
+            impact = summary.sort_values("clients_affectes", ascending=False)
+            render_horizontal_ranking(
+                impact,
+                cause_col,
+                "clients_affectes",
+                height=500,
+                max_rows=10,
+            )
+
+        render_status(
+            "Une cause inconnue n’est pas nécessairement une erreur : elle signifie généralement que la source ne fournit pas encore cette information.",
+            "warning",
+        )
 
 
 # =============================================================================
 # Surveillance
 # =============================================================================
 
-with tab_watch:
-    st.header("Surveillance")
-    st.caption("Vue opérationnelle des pannes actives qui méritent une attention particulière.")
+elif page == "Surveillance":
+    render_page_header(
+        "Opérations",
+        "Surveillance",
+        "Priorisation des pannes majeures, des durées longues et des rétablissements à suivre.",
+    )
 
     priority = filtered.copy()
-
     if "customers_affected" in priority.columns:
+        priority["customers_affected"] = pd.to_numeric(priority["customers_affected"], errors="coerce").fillna(0)
         priority = priority.sort_values("customers_affected", ascending=False)
 
-    alert_cols = [
+    major = (
+        priority[priority["customers_affected"] >= major_threshold]
+        if "customers_affected" in priority.columns
+        else pd.DataFrame()
+    )
+    longest_hours = (
+        pd.to_numeric(priority["observed_duration_hours"], errors="coerce").max()
+        if "observed_duration_hours" in priority.columns and not priority.empty
+        else 0
+    )
+
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Pannes majeures", format_int(unique_outage_count(major)))
+    k2.metric("Clients dans les pannes majeures", format_int(safe_numeric_sum(major, "customers_affected")))
+    k3.metric("Durée observée maximale", f"{float(longest_hours or 0):.1f} h")
+
+    if major.empty:
+        render_status("Aucune panne majeure active selon le seuil sélectionné.", "good")
+    else:
+        render_status(
+            f"{unique_outage_count(major)} panne(s) dépassent actuellement le seuil de {format_int(major_threshold)} clients.",
+            "danger",
+        )
+
+    left, right = st.columns([1.15, 1], gap="large")
+    with left:
+        render_section_header("Pannes majeures", "Priorité par clients affectés")
+        major_cols = [
+            "customers_affected",
+            "municipality_label",
+            "region_name",
+            "analysis_cause_label_fr",
+            "status_fr",
+            "estimated_restore",
+        ]
+        show_table(major.head(15), major_cols, height=460)
+
+    with right:
+        render_section_header("Durées les plus longues", "Pannes actives")
+        if "observed_duration_hours" in priority.columns and not priority.empty:
+            long_df = priority.dropna(subset=["observed_duration_hours"]).head(12).copy()
+            long_df = long_df.sort_values("observed_duration_hours", ascending=False).head(10)
+            if not long_df.empty and "municipality_label" in long_df.columns:
+                render_horizontal_ranking(
+                    long_df,
+                    "municipality_label",
+                    "observed_duration_hours",
+                    height=460,
+                    max_rows=10,
+                    axis_title="Durée observée, h",
+                )
+            else:
+                st.info("Aucune durée disponible.")
+        else:
+            st.info("La durée observée n’est pas disponible dans cette source.")
+
+    render_section_header("Dernières pannes détectées", "25 premières")
+    recent = latest.copy()
+    if "first_capture_at" in recent.columns:
+        recent = recent.sort_values("first_capture_at", ascending=False)
+    recent_cols = [
         "customers_affected",
         "municipality_label",
         "region_name",
         "mrc_name",
-        "analysis_cause_label_fr",
         "status_fr",
-        "active_capture_at",
+        "analysis_cause_label_fr",
+        "first_capture_at",
         "estimated_restore",
     ]
-
-    w1, w2 = st.columns([1.05, 1])
-
-    with w1:
-        with st.container(border=True):
-            st.subheader("Alertes prioritaires")
-
-            major = priority.copy()
-            if "customers_affected" in major.columns:
-                major = major[major["customers_affected"] >= major_threshold]
-
-            if major.empty:
-                st.success("Aucune panne majeure active selon le seuil actuel.")
-            else:
-                show_table(major.head(10), alert_cols, height=420)
-
-    with w2:
-        with st.container(border=True):
-            st.subheader("Pannes observées le plus longtemps")
-
-            long = filtered.copy()
-            if "observed_duration_hours" in long.columns:
-                long = long.sort_values("observed_duration_hours", ascending=False).head(12)
-
-                if not long.empty:
-                    fig = px.bar(
-                        long.sort_values("observed_duration_hours"),
-                        x="observed_duration_hours",
-                        y="municipality_label",
-                        orientation="h",
-                        color="analysis_cause_label_fr" if "analysis_cause_label_fr" in long.columns else None,
-                        hover_data=[
-                            col for col in [
-                                "customers_affected",
-                                "region_name",
-                                "mrc_name",
-                                "status_fr",
-                                "first_capture_at",
-                                "estimated_restore",
-                            ]
-                            if col in long.columns
-                        ],
-                        title="Durée observée des pannes actives",
-                        labels={
-                            "observed_duration_hours": "Durée observée, heures",
-                            "municipality_label": "Municipalité",
-                            "analysis_cause_label_fr": "Cause",
-                        },
-                    )
-                    fig = apply_common_layout(fig, height=420)
-                    st.plotly_chart(fig, width="stretch")
-                else:
-                    st.info("Aucune panne active selon les filtres.")
-            else:
-                st.info("La colonne de durée observée n’est pas disponible.")
-
-    with st.container(border=True):
-        st.subheader("Dernières pannes détectées")
-
-        recent = latest.copy()
-        if "first_capture_at" in recent.columns:
-            recent = recent.sort_values("first_capture_at", ascending=False)
-
-        recent_cols = [
-            "customers_affected",
-            "municipality_label",
-            "region_name",
-            "mrc_name",
-            "status_fr",
-            "analysis_cause_label_fr",
-            "first_capture_at",
-            "estimated_restore",
-        ]
-
-        show_table(recent.head(25), recent_cols, height=420)
-
-        with st.expander("Voir les identifiants techniques des dernières pannes"):
-            show_table(
-                recent.head(25),
-                ["short_outage_id", "outage_id", "lon", "lat"],
-                height=260,
-            )
+    show_table(recent.head(25), recent_cols, height=480)
 
 
 # =============================================================================
-# Qualité & limites
+# Qualité des données
 # =============================================================================
 
-with tab_quality:
-    st.header("Qualité & limites")
-    st.caption(
-        "Séparation entre les contrôles qualité du pipeline et les limites normales de la source, "
-        "comme les causes inconnues."
+elif page == "Qualité des données":
+    render_page_header(
+        "Fiabilité",
+        "Qualité des données",
+        "Les contrôles techniques sont séparés des limites normales de la source afin d’éviter les faux signaux d’alerte.",
     )
 
     if quality.empty:
         st.warning("Aucun rapport qualité disponible.")
     else:
-        quality_checks = quality[
-            ~quality["check_name"].isin(SOURCE_LIMIT_CHECKS)
-        ].copy() if "check_name" in quality.columns else quality.copy()
+        quality_checks = (
+            quality[~quality["check_name"].isin(SOURCE_LIMIT_CHECKS)].copy()
+            if "check_name" in quality.columns
+            else quality.copy()
+        )
+        source_limits = (
+            quality[quality["check_name"].isin(SOURCE_LIMIT_CHECKS)].copy()
+            if "check_name" in quality.columns
+            else pd.DataFrame()
+        )
 
-        source_limits = quality[
-            quality["check_name"].isin(SOURCE_LIMIT_CHECKS)
-        ].copy() if "check_name" in quality.columns else pd.DataFrame()
-
-        failed_critical = (
+        affected = pd.to_numeric(quality_checks.get("rows_affected", 0), errors="coerce").fillna(0)
+        issues = quality_checks[affected > 0].copy() if not quality_checks.empty else pd.DataFrame()
+        critical_failures = (
             quality_checks[
                 quality_checks["severity"].astype(str).str.lower().eq("critical")
                 & quality_checks["status"].astype(str).str.lower().eq("fail")
@@ -1965,141 +2288,157 @@ with tab_quality:
             if {"severity", "status"}.issubset(quality_checks.columns)
             else 0
         )
-
-        warnings_affected = (
-            quality_checks[
-                quality_checks["severity"].astype(str).str.lower().eq("warning")
-                & (quality_checks["rows_affected"].fillna(0) > 0)
-            ].shape[0]
-            if {"severity", "rows_affected"}.issubset(quality_checks.columns)
+        passed_count = (
+            quality_checks["status"].astype(str).str.lower().eq("pass").sum()
+            if "status" in quality_checks.columns
             else 0
         )
+        geocoded_rate = bool_rate(latest["is_geocoded"]) if "is_geocoded" in latest.columns else 0
 
-        total_rows = quality["total_rows"].max() if "total_rows" in quality.columns else 0
-        limits = source_limit_summary(latest, quality)
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Contrôles réussis", format_int(passed_count))
+        k2.metric("Erreurs critiques", format_int(critical_failures))
+        k3.metric("Municipalités géocodées", format_pct(geocoded_rate))
 
-        q1, q2, q3, q4, q5 = st.columns(5)
-        q1.metric("Erreurs critiques", format_int(failed_critical))
-        q2.metric("Avertissements actifs", format_int(warnings_affected))
-        q3.metric("Lignes brutes", format_int(total_rows))
-        q4.metric("Municipalités géocodées", format_pct(limits["geocoded_rate"]))
-        q5.metric("Causes connues", format_pct(limits["known_cause_rate"]))
-
-        left, right = st.columns([1.2, 1])
-
-        with left:
-            with st.container(border=True):
-                st.subheader("Contrôles qualité du pipeline")
-
-                q_cols = [
-                    "check_name_fr",
-                    "severity_fr",
-                    "status_quality_fr",
-                    "rows_affected",
-                    "failed_rate_pct",
-                    "description",
-                ]
-                show_table(quality_checks, q_cols, height=520)
-
-        with right:
-            with st.container(border=True):
-                st.subheader("Lignes affectées par contrôle")
-
-                if "rows_affected" in quality_checks.columns and "check_name_fr" in quality_checks.columns:
-                    qchart = quality_checks.sort_values("rows_affected", ascending=True)
-                    fig = px.bar(
-                        qchart,
-                        x="rows_affected",
-                        y="check_name_fr",
-                        orientation="h",
-                        title="Contrôles qualité, hors limites de source",
-                        labels={
-                            "rows_affected": "Lignes affectées",
-                            "check_name_fr": "Contrôle",
-                        },
-                    )
-                    fig = apply_common_layout(fig, height=520)
-                    st.plotly_chart(fig, width="stretch")
-
-        with st.container(border=True):
-            st.subheader("Limites connues de la source")
-
-            l1, l2, l3 = st.columns(3)
-            l1.metric("Lignes avec cause inconnue", format_int(limits["unknown_rows"]))
-            l2.metric("Taux de causes inconnues", format_pct(limits["unknown_cause_rate"]))
-            l3.metric("Taux de causes connues", format_pct(limits["known_cause_rate"]))
-
-            st.markdown(
-                "<div class='insight'>Les causes inconnues sont conservées volontairement. "
-                "Elles documentent une limite de disponibilité de la source et ne sont pas traitées comme une erreur critique du pipeline.</div>",
-                unsafe_allow_html=True,
+        if critical_failures == 0 and issues.empty:
+            render_status(
+                f"Tous les {len(quality_checks)} contrôles techniques sont réussis et aucune ligne problématique n’est détectée.",
+                "good",
+            )
+        elif critical_failures > 0:
+            render_status(
+                f"{critical_failures} contrôle(s) critique(s) sont en échec. Une intervention est recommandée.",
+                "danger",
+            )
+        else:
+            render_status(
+                f"{len(issues)} contrôle(s) contiennent des lignes à examiner, sans échec critique.",
+                "warning",
             )
 
-            if not source_limits.empty:
-                show_table(
-                    source_limits,
-                    [
-                        "check_name_fr",
-                        "severity_fr",
-                        "status_quality_fr",
-                        "rows_affected",
-                        "failed_rate_pct",
-                        "description",
-                    ],
-                    height=180,
-                )
+        render_section_header("Contrôles techniques", "Vue compacte")
+        compact = quality_checks.copy()
+        if "status_quality_fr" in compact.columns:
+            compact["statut_affiche"] = compact["status_quality_fr"].map(
+                {"Réussi": "✓ Réussi", "Échec": "✕ Échec", "Information": "ℹ Information"}
+            ).fillna(compact["status_quality_fr"])
+        else:
+            compact["statut_affiche"] = compact.get("status", "")
+
+        compact_cols = [
+            col for col in ["check_name_fr", "severity_fr", "statut_affiche", "rows_affected", "failed_rate_pct"]
+            if col in compact.columns
+        ]
+        compact_display = compact[compact_cols].rename(
+            columns={
+                "check_name_fr": "Contrôle",
+                "severity_fr": "Sévérité",
+                "statut_affiche": "Statut",
+                "rows_affected": "Lignes affectées",
+                "failed_rate_pct": "Taux affecté, %",
+            }
+        )
+        st.dataframe(
+            compact_display,
+            width="stretch",
+            hide_index=True,
+            height=min(460, 42 + 36 * max(len(compact_display), 1)),
+        )
+
+        if not issues.empty and {"rows_affected", "check_name_fr"}.issubset(issues.columns):
+            render_section_header("Contrôles à examiner", "Seulement les valeurs supérieures à zéro")
+            render_horizontal_ranking(
+                issues,
+                "check_name_fr",
+                "rows_affected",
+                height=330,
+                max_rows=10,
+                axis_title="Lignes affectées",
+            )
+
+        with st.expander("Description des contrôles"):
+            description_cols = [
+                col for col in ["check_name_fr", "description_fr"] if col in quality_checks.columns
+            ]
+            descriptions = quality_checks[description_cols].rename(
+                columns={"check_name_fr": "Contrôle", "description_fr": "Description"}
+            )
+            st.dataframe(descriptions, width="stretch", hide_index=True)
+
+        render_section_header("Limites de la source", "Non considérées comme des erreurs techniques")
+        known_cause_rate = bool_rate(latest["has_known_cause"]) if "has_known_cause" in latest.columns else 0
+        raw_unknown_rows = 0
+        raw_unknown_rate = 0.0
+        if not source_limits.empty:
+            if "rows_affected" in source_limits.columns:
+                raw_unknown_rows = pd.to_numeric(source_limits["rows_affected"], errors="coerce").fillna(0).max()
+            if "failed_rate_pct" in source_limits.columns:
+                raw_unknown_rate = pd.to_numeric(source_limits["failed_rate_pct"], errors="coerce").fillna(0).max()
+
+        l1, l2, l3 = st.columns(3)
+        l1.metric("Pannes avec cause connue", format_pct(known_cause_rate))
+        l2.metric("Observations brutes sans cause", format_pct(raw_unknown_rate))
+        l3.metric("Observations concernées", format_int(raw_unknown_rows))
+
+        render_status(
+            "Les deux pourcentages utilisent des dénominateurs différents : le premier porte sur la dernière observation par panne, le second sur toutes les observations brutes.",
+            "warning",
+        )
 
 
 # =============================================================================
 # Données
 # =============================================================================
 
-with tab_data:
-    st.header("Données")
-    st.caption(
-        "Accès contrôlé aux tables principales du pipeline. "
-        "Pour garder l'application rapide, l'affichage est limité à 1 000 lignes, "
-        "mais les téléchargements contiennent les données complètes."
+elif page == "Données":
+    render_page_header(
+        "Export",
+        "Données",
+        "Consulte et télécharge les principales tables du pipeline. L’affichage est limité pour préserver les performances.",
     )
 
     table_name = st.selectbox(
-        "Table à afficher",
+        "Table",
         [
             "Pannes actives filtrées",
             "Toutes les pannes actives",
             "Dernière observation par panne",
             "Sommaire quotidien",
             "Rapport qualité",
-            "Historique brut enrichi, échantillon",
+            "Historique brut enrichi",
         ],
     )
 
+    data_table = pd.DataFrame()
+    filename = "donnees.csv"
+
     if table_name == "Pannes actives filtrées":
-        show_table(filtered, height=620)
-        make_download(filtered, "Télécharger les pannes filtrées", "pannes_actives_filtrees.csv")
-
+        data_table = filtered
+        filename = "pannes_actives_filtrees.csv"
     elif table_name == "Toutes les pannes actives":
-        show_table(active, height=620)
-        make_download(active, "Télécharger les pannes actives", "pannes_actives.csv")
-
+        data_table = active
+        filename = "pannes_actives.csv"
     elif table_name == "Dernière observation par panne":
-        show_table(latest, height=620)
-        make_download(latest, "Télécharger les dernières observations", "dernieres_observations.csv")
-
+        data_table = latest
+        filename = "dernieres_observations.csv"
     elif table_name == "Sommaire quotidien":
-        show_table(daily, height=620)
-        make_download(daily, "Télécharger le sommaire quotidien", "sommaire_quotidien.csv")
-
+        data_table = daily
+        filename = "sommaire_quotidien.csv"
     elif table_name == "Rapport qualité":
-        show_table(quality, height=620)
-        make_download(quality, "Télécharger le rapport qualité", "rapport_qualite.csv")
-
+        data_table = quality
+        filename = "rapport_qualite.csv"
     else:
-        if history_all.empty:
-            st.info(
-                "L’historique n’est pas chargé. Active `Charger les vues historiques` "
-                "dans la sidebar pour afficher ou télécharger cette table."
-            )
+        data_table = history_all
+        filename = "historique_pannes_enrichi.csv"
+
+    if data_table.empty:
+        if table_name == "Historique brut enrichi" and using_supabase():
+            st.info("Active « Précharger l’historique » dans la barre latérale pour rendre cette table disponible.")
         else:
-            show_table(history_all.head(5000), height=620)
-            make_download(history_all, "Télécharger l’historique brut enrichi", "historique_pannes_enrichi.csv")
+            st.info("Cette table est vide ou indisponible.")
+    else:
+        k1, k2 = st.columns(2)
+        k1.metric("Lignes disponibles", format_int(len(data_table)))
+        k2.metric("Colonnes", format_int(len(data_table.columns)))
+        show_table(data_table, height=620)
+        make_download(data_table, "Télécharger le fichier CSV", filename)
