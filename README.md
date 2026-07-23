@@ -1,4 +1,6 @@
 # ProjetHydro
+Ce projet a pour but de faire un dashboard des pannes electrique chez hydroquebec qui sera updater regulierement avec github action et qui utilise un base de données cloud pour stock les données
+
 
 Date de début des données est le 31 mars 2026
 
