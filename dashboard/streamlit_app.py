@@ -330,9 +330,7 @@ st.markdown(
 )
 
 
-# =============================================================================
-# Traductions et libellés
-# =============================================================================
+# Traductions
 
 CAUSE_TRANSLATIONS = {
     "unknown": "Inconnue",
@@ -419,9 +417,7 @@ SOURCE_LIMIT_CHECKS = {"unknown_cause_rows"}
 QUEBEC_TIMEZONE = "America/Toronto"
 
 
-# =============================================================================
 # Fonctions utilitaires
-# =============================================================================
 
 @st.cache_data(show_spinner=False, ttl=300)
 def load_csv(path: Path) -> pd.DataFrame:
@@ -442,9 +438,8 @@ def load_csv(path: Path) -> pd.DataFrame:
         "created_at",
     ]
 
-    # Les horodatages de la source sont interprétés en UTC, puis convertis
-    # dans le fuseau du Québec. Le fuseau reste attaché aux valeurs afin
-    # d'éviter un décalage silencieux dans les cartes et les filtres.
+    # Les heures de la source sont interprétés en UTC, puis convertis
+    # dans le fuseau du Québec
     for col in timestamp_cols:
         if col in df.columns:
             df[col] = (
@@ -492,9 +487,7 @@ def load_csv(path: Path) -> pd.DataFrame:
     return df
 
 
-# =============================================================================
 # Lecture Supabase
-# =============================================================================
 
 def get_config_value(name: str, default=None):
     """Read configuration from environment variables or Streamlit secrets."""
@@ -905,7 +898,6 @@ def show_table(df: pd.DataFrame, columns: list[str] | None = None, height: int |
         st.info("Aucune donnée à afficher selon les filtres actuels.")
         return
 
-    # Very large interactive tables can make Streamlit Cloud slow.
     max_display_rows = 250
 
     if len(display_df) > max_display_rows:
@@ -1035,7 +1027,6 @@ def render_outage_map(
 
     if "customers_affected" in geo.columns:
         customers = pd.to_numeric(geo["customers_affected"], errors="coerce").fillna(0).clip(lower=0)
-        # Square-root scaling prevents one large outage from making every other marker invisible.
         geo["taille_carte"] = customers.pow(0.5) + 2
     else:
         geo["taille_carte"] = 4
