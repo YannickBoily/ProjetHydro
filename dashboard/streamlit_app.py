@@ -529,37 +529,52 @@ def using_supabase() -> bool:
     return bool(get_config_value("SUPABASE_DB_URL"))
 
 
-@st.cache_data(show_spinner=False, ttl=CACHE_TTL_SECONDS)
-def load_supabase_query(query: str) -> pd.DataFrame:
-    """Exécuter une requête SQL Supabase/PostgreSQL et normaliser le résultat."""
+@st.cache_resource(show_spinner=False)
+def get_supabase_engine():
+    """Créer et réutiliser le moteur PostgreSQL/Supabase."""
     database_url = get_config_value("SUPABASE_DB_URL")
     database_hostaddr = get_config_value("SUPABASE_DB_HOSTADDR")
 
     if not database_url:
-        return pd.DataFrame()
+        return None
 
     try:
         from sqlalchemy import create_engine
     except ImportError as exc:
         st.error(
-            "La dépendance `SQLAlchemy` est manquante. "
+            "La dépendance `SQLAlchemy` est manquante."
         )
         raise exc
 
-    connect_args = {}
+    connect_args = {
+        "sslmode": "require",
+        "connect_timeout": 10,
+    }
+
     if database_hostaddr:
         connect_args["hostaddr"] = database_hostaddr
 
-    engine = create_engine(
+    return create_engine(
         database_url,
         connect_args=connect_args,
         pool_pre_ping=True,
+        pool_recycle=240,
+        use_native_hstore=False,
     )
 
-    try:
-        df = pd.read_sql_query(query, engine)
-    finally:
-        engine.dispose()
+
+@st.cache_data(show_spinner=False, ttl=CACHE_TTL_SECONDS)
+def load_supabase_query(query: str) -> pd.DataFrame:
+    """Exécuter une requête PostgreSQL/Supabase et normaliser le résultat."""
+    engine = get_supabase_engine()
+
+    if engine is None:
+        return pd.DataFrame()
+
+    df = pd.read_sql_query(
+        query,
+        engine,
+    )
 
     return normalize_dataframe(df)
 
