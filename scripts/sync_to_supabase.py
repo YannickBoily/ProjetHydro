@@ -324,12 +324,14 @@ def load_municipalities() -> pd.DataFrame:
 # =============================================================================
 # Incremental synchronization
 # =============================================================================
-
 def get_latest_database_capture(
     connection,
 ) -> pd.Timestamp | None:
     """
     Return the latest raw capture already stored in Supabase.
+
+    Database timestamps are interpreted as UTC whether PostgreSQL returns
+    them as timezone-aware or timezone-naive values.
     """
     with connection.cursor() as cursor:
         cursor.execute(
@@ -339,19 +341,21 @@ def get_latest_database_capture(
             """
         )
 
-        value = cursor.fetchone()[
-            0
-        ]
+        value = cursor.fetchone()[0]
 
     if value is None:
         return None
 
-    return pd.Timestamp(
-        value
-    ).tz_convert(
-        "UTC"
+    timestamp = pd.to_datetime(
+        value,
+        errors="coerce",
+        utc=True,
     )
 
+    if pd.isna(timestamp):
+        return None
+
+    return pd.Timestamp(timestamp)
 
 def filter_incremental_raw_history(
     connection,
