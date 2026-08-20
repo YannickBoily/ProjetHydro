@@ -3,6 +3,36 @@ import os
 import psycopg2
 
 
+DEFAULT_HEAVY_REFRESH_HOURS = 24
+
+
+def get_heavy_refresh_hours() -> int:
+    raw_value = os.environ.get(
+        "SUPABASE_HEAVY_REFRESH_HOURS",
+        str(DEFAULT_HEAVY_REFRESH_HOURS),
+    )
+
+    try:
+        hours = int(raw_value)
+    except (TypeError, ValueError):
+        hours = DEFAULT_HEAVY_REFRESH_HOURS
+
+    return max(hours, 1)
+
+
+def force_heavy_refresh() -> bool:
+    value = os.environ.get(
+        "SUPABASE_FORCE_HEAVY_REFRESH",
+        "",
+    )
+    return value.strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def connect():
     database_url = os.environ.get("SUPABASE_DB_URL")
     database_hostaddr = os.environ.get("SUPABASE_DB_HOSTADDR")
@@ -10,7 +40,11 @@ def connect():
     if not database_url:
         raise RuntimeError("Missing SUPABASE_DB_URL environment variable.")
 
-    connection_kwargs = {}
+    connection_kwargs = {
+        "sslmode": "require",
+        "connect_timeout": 15,
+        "application_name": "projethydro_analytics_refresh",
+    }
 
     if database_hostaddr:
         connection_kwargs["hostaddr"] = database_hostaddr
@@ -26,6 +60,86 @@ def execute_step(connection, name: str, sql: str) -> None:
 
     connection.commit()
     print(f"Done: {name}")
+
+
+def ensure_refresh_state_table(connection) -> None:
+    execute_step(
+        connection,
+        "ensure analytics refresh state",
+        """
+        CREATE TABLE IF NOT EXISTS app_refresh_state (
+            refresh_group TEXT PRIMARY KEY,
+            last_refreshed_at TIMESTAMPTZ NOT NULL
+        );
+
+        ALTER TABLE app_refresh_state ENABLE ROW LEVEL SECURITY;
+        REVOKE ALL ON TABLE app_refresh_state FROM anon, authenticated;
+        """,
+    )
+
+
+def heavy_refresh_is_due(connection) -> bool:
+    if force_heavy_refresh():
+        print("Heavy analytics refresh forced by environment.")
+        return True
+
+    refresh_hours = get_heavy_refresh_hours()
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT
+                to_regclass('public.app_daily_summary') IS NULL
+                OR to_regclass('public.app_data_quality_report') IS NULL
+                OR last_refreshed_at IS NULL
+                OR last_refreshed_at
+                    <= NOW() - (%s * INTERVAL '1 hour')
+            FROM (
+                SELECT (
+                    SELECT last_refreshed_at
+                    FROM app_refresh_state
+                    WHERE refresh_group = 'heavy_analytics'
+                ) AS last_refreshed_at
+            ) state;
+            """,
+            (refresh_hours,),
+        )
+        due = bool(cursor.fetchone()[0])
+
+    if due:
+        print(
+            "Heavy analytics refresh is due "
+            f"(interval: {refresh_hours}h)."
+        )
+    else:
+        print(
+            "Skipping heavy analytics refresh "
+            f"(interval: {refresh_hours}h)."
+        )
+
+    return due
+
+
+def mark_heavy_refresh_complete(connection) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO app_refresh_state (
+                refresh_group,
+                last_refreshed_at
+            )
+            VALUES (
+                'heavy_analytics',
+                NOW()
+            )
+            ON CONFLICT (refresh_group)
+            DO UPDATE SET
+                last_refreshed_at = EXCLUDED.last_refreshed_at;
+            """
+        )
+
+    connection.commit()
+    print("Heavy analytics refresh timestamp updated.")
 
 
 def main() -> None:
@@ -54,6 +168,8 @@ def main() -> None:
             ON raw_outage_snapshots (municipality_id, captured_at DESC);
             """,
         )
+
+        ensure_refresh_state_table(connection)
 
         execute_step(
             connection,
@@ -167,6 +283,12 @@ def main() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_app_latest_outages_region
             ON app_latest_outages (region_name);
+
+            CREATE INDEX IF NOT EXISTS idx_app_latest_outages_sort
+            ON app_latest_outages (
+                last_capture_at DESC,
+                customers_affected DESC
+            );
             """,
         )
 
@@ -214,237 +336,245 @@ def main() -> None:
             """,
         )
 
-        execute_step(
-            connection,
-            "refresh app_daily_summary",
-            """
-            SET statement_timeout = '120s';
+        if heavy_refresh_is_due(connection):
+            execute_step(
+                connection,
+                "refresh app_daily_summary",
+                """
+                SET statement_timeout = '120s';
 
-            DROP TABLE IF EXISTS app_daily_summary;
+                DROP TABLE IF EXISTS app_daily_summary;
 
-            CREATE TABLE app_daily_summary AS
-            WITH snapshots AS (
-                SELECT
-                    r.*,
-                    DATE_TRUNC('minute', r.captured_at) AS capture_batch_minute,
-                    CAST(r.captured_at AS DATE) AS capture_date
-                FROM raw_outage_snapshots r
-                WHERE r.captured_at IS NOT NULL
-            ),
+                CREATE TABLE app_daily_summary AS
+                WITH snapshots AS (
+                    SELECT
+                        r.*,
+                        DATE_TRUNC('minute', r.captured_at) AS capture_batch_minute,
+                        CAST(r.captured_at AS DATE) AS capture_date
+                    FROM raw_outage_snapshots r
+                    WHERE r.captured_at IS NOT NULL
+                ),
 
-            capture_summary AS (
-                SELECT
-                    capture_batch_minute,
-                    capture_date,
-                    COUNT(DISTINCT outage_id) AS active_outages_estimate,
-                    SUM(customers_affected) AS customers_affected_snapshot,
-                    COUNT(DISTINCT municipality_id) AS municipalities_affected_snapshot,
-                    SUM(CASE WHEN customers_affected >= 1000 THEN 1 ELSE 0 END) AS major_outages_snapshot
-                FROM snapshots
-                GROUP BY capture_batch_minute, capture_date
-            ),
+                capture_summary AS (
+                    SELECT
+                        capture_batch_minute,
+                        capture_date,
+                        COUNT(DISTINCT outage_id) AS active_outages_estimate,
+                        SUM(customers_affected) AS customers_affected_snapshot,
+                        COUNT(DISTINCT municipality_id) AS municipalities_affected_snapshot,
+                        SUM(CASE WHEN customers_affected >= 1000 THEN 1 ELSE 0 END) AS major_outages_snapshot
+                    FROM snapshots
+                    GROUP BY capture_batch_minute, capture_date
+                ),
 
-            daily_from_snapshots AS (
-                SELECT
-                    capture_date,
-                    COUNT(*) AS snapshots_count,
-                    MAX(active_outages_estimate) AS max_active_outages_estimate,
-                    ROUND(AVG(active_outages_estimate), 2) AS avg_active_outages_estimate,
-                    MAX(customers_affected_snapshot) AS max_customers_affected,
-                    ROUND(AVG(customers_affected_snapshot), 2) AS avg_customers_affected,
-                    MAX(municipalities_affected_snapshot) AS max_municipalities_affected,
-                    MAX(major_outages_snapshot) AS max_major_outages
-                FROM capture_summary
-                GROUP BY capture_date
-            ),
+                daily_from_snapshots AS (
+                    SELECT
+                        capture_date,
+                        COUNT(*) AS snapshots_count,
+                        MAX(active_outages_estimate) AS max_active_outages_estimate,
+                        ROUND(AVG(active_outages_estimate), 2) AS avg_active_outages_estimate,
+                        MAX(customers_affected_snapshot) AS max_customers_affected,
+                        ROUND(AVG(customers_affected_snapshot), 2) AS avg_customers_affected,
+                        MAX(municipalities_affected_snapshot) AS max_municipalities_affected,
+                        MAX(major_outages_snapshot) AS max_major_outages
+                    FROM capture_summary
+                    GROUP BY capture_date
+                ),
 
-            first_seen AS (
-                SELECT
-                    outage_id,
-                    MIN(captured_at) AS first_seen_at
-                FROM raw_outage_snapshots
-                WHERE outage_id IS NOT NULL
-                  AND captured_at IS NOT NULL
-                GROUP BY outage_id
-            ),
-
-            new_outages AS (
-                SELECT
-                    CAST(first_seen_at AS DATE) AS capture_date,
-                    COUNT(*) AS new_outages_detected
-                FROM first_seen
-                GROUP BY CAST(first_seen_at AS DATE)
-            ),
-
-            observed AS (
-                SELECT
-                    capture_date,
-                    COUNT(*) AS raw_rows_count,
-                    COUNT(DISTINCT outage_id) AS unique_outages_observed,
-                    SUM(CASE WHEN LOWER(COALESCE(cause_label, 'unknown')) = 'unknown' THEN 1 ELSE 0 END)
-                        AS unknown_cause_rows,
-                    COUNT(DISTINCT municipality_id) AS municipalities_observed
-                FROM snapshots
-                GROUP BY capture_date
-            )
-
-            SELECT
-                d.capture_date AS date,
-                d.snapshots_count,
-                d.max_active_outages_estimate,
-                d.avg_active_outages_estimate,
-                d.max_customers_affected,
-                d.avg_customers_affected,
-                d.max_municipalities_affected,
-                d.max_major_outages,
-                COALESCE(n.new_outages_detected, 0) AS new_outages_detected,
-                o.raw_rows_count,
-                o.unique_outages_observed,
-                o.unknown_cause_rows,
-                o.municipalities_observed
-            FROM daily_from_snapshots d
-            LEFT JOIN new_outages n
-                ON d.capture_date = n.capture_date
-            LEFT JOIN observed o
-                ON d.capture_date = o.capture_date;
-
-            CREATE INDEX IF NOT EXISTS idx_app_daily_summary_date
-            ON app_daily_summary (date);
-            """,
-        )
-
-        execute_step(
-            connection,
-            "refresh app_data_quality_report",
-            """
-            SET statement_timeout = '120s';
-
-            DROP TABLE IF EXISTS app_data_quality_report;
-
-            CREATE TABLE app_data_quality_report AS
-            WITH total AS (
-                SELECT COUNT(*) AS total_rows
-                FROM raw_outage_snapshots
-            ),
-
-            checks AS (
-                SELECT
-                    'missing_outage_id' AS check_name,
-                    'critical' AS severity,
-                    COUNT(*) AS rows_affected,
-                    'Rows where outage_id is missing.' AS description
-                FROM raw_outage_snapshots
-                WHERE outage_id IS NULL OR TRIM(outage_id) = ''
-
-                UNION ALL
-
-                SELECT
-                    'missing_captured_at' AS check_name,
-                    'critical' AS severity,
-                    COUNT(*) AS rows_affected,
-                    'Rows where captured_at is missing or invalid.' AS description
-                FROM raw_outage_snapshots
-                WHERE captured_at IS NULL
-
-                UNION ALL
-
-                SELECT
-                    'negative_customers_affected' AS check_name,
-                    'critical' AS severity,
-                    COUNT(*) AS rows_affected,
-                    'Rows where customers_affected is negative.' AS description
-                FROM raw_outage_snapshots
-                WHERE customers_affected < 0
-
-                UNION ALL
-
-                SELECT
-                    'invalid_coordinates' AS check_name,
-                    'warning' AS severity,
-                    COUNT(*) AS rows_affected,
-                    'Rows with coordinates outside approximate Quebec bounds.' AS description
-                FROM raw_outage_snapshots
-                WHERE lon IS NULL
-                   OR lat IS NULL
-                   OR lon < -80
-                   OR lon > -57
-                   OR lat < 44
-                   OR lat > 63
-
-                UNION ALL
-
-                SELECT
-                    'estimated_restore_before_start_time' AS check_name,
-                    'warning' AS severity,
-                    COUNT(*) AS rows_affected,
-                    'Rows where estimated_restore is before start_time.' AS description
-                FROM raw_outage_snapshots
-                WHERE estimated_restore IS NOT NULL
-                  AND start_time IS NOT NULL
-                  AND estimated_restore < start_time
-
-                UNION ALL
-
-                SELECT
-                    'captured_at_before_start_time' AS check_name,
-                    'warning' AS severity,
-                    COUNT(*) AS rows_affected,
-                    'Rows where captured_at is before start_time.' AS description
-                FROM raw_outage_snapshots
-                WHERE captured_at IS NOT NULL
-                  AND start_time IS NOT NULL
-                  AND captured_at < start_time
-
-                UNION ALL
-
-                SELECT
-                    'duplicate_outage_id_captured_at' AS check_name,
-                    'critical' AS severity,
-                    COUNT(*) AS rows_affected,
-                    'Duplicate records for the same outage_id and captured_at.' AS description
-                FROM (
+                first_seen AS (
                     SELECT
                         outage_id,
-                        captured_at,
-                        COUNT(*) AS duplicate_count
+                        MIN(captured_at) AS first_seen_at
                     FROM raw_outage_snapshots
                     WHERE outage_id IS NOT NULL
                       AND captured_at IS NOT NULL
-                    GROUP BY outage_id, captured_at
-                    HAVING COUNT(*) > 1
-                ) duplicates
+                    GROUP BY outage_id
+                ),
 
-                UNION ALL
+                new_outages AS (
+                    SELECT
+                        CAST(first_seen_at AS DATE) AS capture_date,
+                        COUNT(*) AS new_outages_detected
+                    FROM first_seen
+                    GROUP BY CAST(first_seen_at AS DATE)
+                ),
+
+                observed AS (
+                    SELECT
+                        capture_date,
+                        COUNT(*) AS raw_rows_count,
+                        COUNT(DISTINCT outage_id) AS unique_outages_observed,
+                        SUM(CASE WHEN LOWER(COALESCE(cause_label, 'unknown')) = 'unknown' THEN 1 ELSE 0 END)
+                            AS unknown_cause_rows,
+                        COUNT(DISTINCT municipality_id) AS municipalities_observed
+                    FROM snapshots
+                    GROUP BY capture_date
+                )
 
                 SELECT
-                    'unknown_cause_rows' AS check_name,
-                    'info' AS severity,
-                    COUNT(*) AS rows_affected,
-                    'Rows where cause_label is unknown.' AS description
-                FROM raw_outage_snapshots
-                WHERE LOWER(COALESCE(cause_label, 'unknown')) = 'unknown'
+                    d.capture_date AS date,
+                    d.snapshots_count,
+                    d.max_active_outages_estimate,
+                    d.avg_active_outages_estimate,
+                    d.max_customers_affected,
+                    d.avg_customers_affected,
+                    d.max_municipalities_affected,
+                    d.max_major_outages,
+                    COALESCE(n.new_outages_detected, 0) AS new_outages_detected,
+                    o.raw_rows_count,
+                    o.unique_outages_observed,
+                    o.unknown_cause_rows,
+                    o.municipalities_observed
+                FROM daily_from_snapshots d
+                LEFT JOIN new_outages n
+                    ON d.capture_date = n.capture_date
+                LEFT JOIN observed o
+                    ON d.capture_date = o.capture_date;
+
+                CREATE INDEX IF NOT EXISTS idx_app_daily_summary_date
+                ON app_daily_summary (date);
+                """,
             )
 
-            SELECT
-                c.check_name,
-                c.severity,
-                CASE
-                    WHEN c.rows_affected = 0 THEN 'pass'
-                    WHEN c.severity = 'info' THEN 'info'
-                    ELSE 'fail'
-                END AS status,
-                c.rows_affected,
-                t.total_rows,
-                ROUND(c.rows_affected * 100.0 / NULLIF(t.total_rows, 0), 2) AS failed_rate_pct,
-                c.description,
-                NOW() AS created_at
-            FROM checks c
-            CROSS JOIN total t;
+            execute_step(
+                connection,
+                "refresh app_data_quality_report",
+                """
+                SET statement_timeout = '120s';
 
-            CREATE INDEX IF NOT EXISTS idx_app_data_quality_report_check
-            ON app_data_quality_report (check_name);
-            """,
-        )
+                DROP TABLE IF EXISTS app_data_quality_report;
+
+                CREATE TABLE app_data_quality_report AS
+                WITH total AS (
+                    SELECT COUNT(*) AS total_rows
+                    FROM raw_outage_snapshots
+                ),
+
+                checks AS (
+                    SELECT
+                        'missing_outage_id' AS check_name,
+                        'critical' AS severity,
+                        COUNT(*) AS rows_affected,
+                        'Rows where outage_id is missing.' AS description
+                    FROM raw_outage_snapshots
+                    WHERE outage_id IS NULL OR TRIM(outage_id) = ''
+
+                    UNION ALL
+
+                    SELECT
+                        'missing_captured_at' AS check_name,
+                        'critical' AS severity,
+                        COUNT(*) AS rows_affected,
+                        'Rows where captured_at is missing or invalid.' AS description
+                    FROM raw_outage_snapshots
+                    WHERE captured_at IS NULL
+
+                    UNION ALL
+
+                    SELECT
+                        'negative_customers_affected' AS check_name,
+                        'critical' AS severity,
+                        COUNT(*) AS rows_affected,
+                        'Rows where customers_affected is negative.' AS description
+                    FROM raw_outage_snapshots
+                    WHERE customers_affected < 0
+
+                    UNION ALL
+
+                    SELECT
+                        'invalid_coordinates' AS check_name,
+                        'warning' AS severity,
+                        COUNT(*) AS rows_affected,
+                        'Rows with coordinates outside approximate Quebec bounds.' AS description
+                    FROM raw_outage_snapshots
+                    WHERE lon IS NULL
+                       OR lat IS NULL
+                       OR lon < -80
+                       OR lon > -57
+                       OR lat < 44
+                       OR lat > 63
+
+                    UNION ALL
+
+                    SELECT
+                        'estimated_restore_before_start_time' AS check_name,
+                        'warning' AS severity,
+                        COUNT(*) AS rows_affected,
+                        'Rows where estimated_restore is before start_time.' AS description
+                    FROM raw_outage_snapshots
+                    WHERE estimated_restore IS NOT NULL
+                      AND start_time IS NOT NULL
+                      AND estimated_restore < start_time
+
+                    UNION ALL
+
+                    SELECT
+                        'captured_at_before_start_time' AS check_name,
+                        'warning' AS severity,
+                        COUNT(*) AS rows_affected,
+                        'Rows where captured_at is before start_time.' AS description
+                    FROM raw_outage_snapshots
+                    WHERE captured_at IS NOT NULL
+                      AND start_time IS NOT NULL
+                      AND captured_at < start_time
+
+                    UNION ALL
+
+                    SELECT
+                        'duplicate_outage_id_captured_at' AS check_name,
+                        'critical' AS severity,
+                        COUNT(*) AS rows_affected,
+                        'Duplicate records for the same outage_id and captured_at.' AS description
+                    FROM (
+                        SELECT
+                            outage_id,
+                            captured_at,
+                            COUNT(*) AS duplicate_count
+                        FROM raw_outage_snapshots
+                        WHERE outage_id IS NOT NULL
+                          AND captured_at IS NOT NULL
+                        GROUP BY outage_id, captured_at
+                        HAVING COUNT(*) > 1
+                    ) duplicates
+
+                    UNION ALL
+
+                    SELECT
+                        'unknown_cause_rows' AS check_name,
+                        'info' AS severity,
+                        COUNT(*) AS rows_affected,
+                        'Rows where cause_label is unknown.' AS description
+                    FROM raw_outage_snapshots
+                    WHERE LOWER(COALESCE(cause_label, 'unknown')) = 'unknown'
+                )
+
+                SELECT
+                    c.check_name,
+                    c.severity,
+                    CASE
+                        WHEN c.rows_affected = 0 THEN 'pass'
+                        WHEN c.severity = 'info' THEN 'info'
+                        ELSE 'fail'
+                    END AS status,
+                    c.rows_affected,
+                    t.total_rows,
+                    ROUND(c.rows_affected * 100.0 / NULLIF(t.total_rows, 0), 2) AS failed_rate_pct,
+                    c.description,
+                    NOW() AS created_at
+                FROM checks c
+                CROSS JOIN total t;
+
+                CREATE INDEX IF NOT EXISTS idx_app_data_quality_report_check
+                ON app_data_quality_report (check_name);
+                """,
+            )
+
+            mark_heavy_refresh_complete(connection)
+        else:
+            print(
+                "app_daily_summary and app_data_quality_report "
+                "were not rebuilt on this run."
+            )
 
         execute_step(
             connection,
