@@ -487,7 +487,31 @@ def sync_raw_history(
                 EXCLUDED.lat,
 
             ingested_at =
-                NOW();
+                NOW()
+
+        WHERE (
+            raw_outage_snapshots.customers_affected,
+            raw_outage_snapshots.start_time,
+            raw_outage_snapshots.estimated_restore,
+            raw_outage_snapshots.status_code,
+            raw_outage_snapshots.status,
+            raw_outage_snapshots.cause_code,
+            raw_outage_snapshots.cause_label,
+            raw_outage_snapshots.municipality_id,
+            raw_outage_snapshots.lon,
+            raw_outage_snapshots.lat
+        ) IS DISTINCT FROM (
+            EXCLUDED.customers_affected,
+            EXCLUDED.start_time,
+            EXCLUDED.estimated_restore,
+            EXCLUDED.status_code,
+            EXCLUDED.status,
+            EXCLUDED.cause_code,
+            EXCLUDED.cause_label,
+            EXCLUDED.municipality_id,
+            EXCLUDED.lon,
+            EXCLUDED.lat
+        );
     """
 
     total_records = len(
@@ -632,7 +656,45 @@ def sync_municipalities(
                 EXCLUDED.last_seen_at,
 
             updated_at =
-                NOW();
+                NOW()
+
+        WHERE (
+            dim_municipalities.municipality_label,
+            dim_municipalities.municipality_name,
+            dim_municipalities.municipality_full_name,
+            dim_municipalities.geo_municipality_code,
+            dim_municipalities.municipality_type_code,
+            dim_municipalities.mrc_code,
+            dim_municipalities.mrc_name,
+            dim_municipalities.region_code,
+            dim_municipalities.region_name,
+            dim_municipalities.is_geocoded,
+            dim_municipalities.match_rate_pct,
+            dim_municipalities.matched_records_count,
+            dim_municipalities.outage_records_count,
+            dim_municipalities.avg_lon,
+            dim_municipalities.avg_lat,
+            dim_municipalities.first_seen_at,
+            dim_municipalities.last_seen_at
+        ) IS DISTINCT FROM (
+            EXCLUDED.municipality_label,
+            EXCLUDED.municipality_name,
+            EXCLUDED.municipality_full_name,
+            EXCLUDED.geo_municipality_code,
+            EXCLUDED.municipality_type_code,
+            EXCLUDED.mrc_code,
+            EXCLUDED.mrc_name,
+            EXCLUDED.region_code,
+            EXCLUDED.region_name,
+            EXCLUDED.is_geocoded,
+            EXCLUDED.match_rate_pct,
+            EXCLUDED.matched_records_count,
+            EXCLUDED.outage_records_count,
+            EXCLUDED.avg_lon,
+            EXCLUDED.avg_lat,
+            EXCLUDED.first_seen_at,
+            EXCLUDED.last_seen_at
+        );
     """
 
     total_records = len(
@@ -835,3 +897,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
