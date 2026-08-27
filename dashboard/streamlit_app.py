@@ -16,6 +16,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pandas as pd
 import plotly.express as px
@@ -428,7 +429,11 @@ COLUMN_LABELS = {
 PLOT_TEMPLATE = "plotly_dark"
 SOURCE_LIMIT_CHECKS = {"unknown_cause_rows"}
 QUEBEC_TIMEZONE = "America/Toronto"
-CACHE_TTL_SECONDS = 300
+CACHE_TTL_SECONDS = 900
+ACTIVE_CACHE_TTL_SECONDS = 900
+RECENT_CACHE_TTL_SECONDS = 3600
+DAILY_CACHE_TTL_SECONDS = 21600
+QUALITY_CACHE_TTL_SECONDS = 21600
 DEFAULT_HISTORY_DAYS = 355
 DEFAULT_HISTORY_ROWS_LIMIT = 25_000
 
@@ -563,7 +568,6 @@ def get_supabase_engine():
     )
 
 
-@st.cache_data(show_spinner=False, ttl=CACHE_TTL_SECONDS)
 def load_supabase_query(query: str) -> pd.DataFrame:
     """Exécuter une requête PostgreSQL/Supabase et normaliser le résultat."""
     engine = get_supabase_engine()
@@ -604,7 +608,7 @@ def get_supabase_history_rows_limit() -> int:
     return max(rows_limit, 1000)
 
 
-@st.cache_data(show_spinner=False, ttl=CACHE_TTL_SECONDS)
+@st.cache_data(show_spinner=False, ttl=ACTIVE_CACHE_TTL_SECONDS)
 def load_supabase_active() -> pd.DataFrame:
     """Charger les pannes actives et faire fitter les noms des colonnes avec les exports CSV."""
     query = """
@@ -634,7 +638,7 @@ def load_supabase_active() -> pd.DataFrame:
     return df
 
 
-@st.cache_data(show_spinner=False, ttl=CACHE_TTL_SECONDS)
+@st.cache_data(show_spinner=False, ttl=RECENT_CACHE_TTL_SECONDS)
 def load_supabase_latest() -> pd.DataFrame:
     """Charger la dernière observation connue de chaque panne."""
     query = """
@@ -645,7 +649,35 @@ def load_supabase_latest() -> pd.DataFrame:
     return load_supabase_query(query)
 
 
-@st.cache_data(show_spinner=False, ttl=CACHE_TTL_SECONDS)
+
+@st.cache_data(show_spinner=False, ttl=RECENT_CACHE_TTL_SECONDS)
+def load_supabase_recent_outages(limit: int = 25) -> pd.DataFrame:
+    """Charger seulement les dernières pannes nécessaires à la page Surveillance."""
+    safe_limit = max(1, min(int(limit), 100))
+    query = f"""
+        SELECT *
+        FROM app_latest_outages
+        ORDER BY first_capture_at DESC NULLS LAST
+        LIMIT {safe_limit};
+    """
+    return load_supabase_query(query)
+
+
+@st.cache_data(show_spinner=False, ttl=QUALITY_CACHE_TTL_SECONDS)
+def load_supabase_latest_metrics() -> pd.DataFrame:
+    """Retourner uniquement les taux nécessaires à la page Qualité."""
+    query = """
+        SELECT
+            100.0 * AVG(CASE WHEN is_geocoded IS TRUE THEN 1.0 ELSE 0.0 END)
+                AS geocoded_rate_pct,
+            100.0 * AVG(CASE WHEN has_known_cause IS TRUE THEN 1.0 ELSE 0.0 END)
+                AS known_cause_rate_pct
+        FROM app_latest_outages;
+    """
+    return load_supabase_query(query)
+
+
+@st.cache_data(show_spinner=False, ttl=RECENT_CACHE_TTL_SECONDS)
 def load_supabase_history() -> pd.DataFrame:
     """Charger une fenêtre bornée de l’historique brut enrichi."""
     days = get_supabase_history_days()
@@ -692,7 +724,7 @@ def load_supabase_history() -> pd.DataFrame:
     return load_supabase_query(query)
 
 
-@st.cache_data(show_spinner=False, ttl=CACHE_TTL_SECONDS)
+@st.cache_data(show_spinner=False, ttl=DAILY_CACHE_TTL_SECONDS)
 def load_supabase_daily_summary() -> pd.DataFrame:
     """Charger les agrégats quotidiens utilisés par les graphiques."""
     query = """
@@ -703,7 +735,7 @@ def load_supabase_daily_summary() -> pd.DataFrame:
     return load_supabase_query(query)
 
 
-@st.cache_data(show_spinner=False, ttl=CACHE_TTL_SECONDS)
+@st.cache_data(show_spinner=False, ttl=QUALITY_CACHE_TTL_SECONDS)
 def load_supabase_quality_report() -> pd.DataFrame:
     """Charger le rapport de qualité, trié par sévérité."""
     query = """
@@ -797,7 +829,78 @@ def add_display_columns(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
+
     return df
+
+
+def prepare_quality_report(df: pd.DataFrame) -> pd.DataFrame:
+    """Ajouter les libellés français au petit rapport de qualité chargé à la demande."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    quality_df = df.copy()
+
+    if "check_name" in quality_df.columns:
+        quality_df["check_name_fr"] = quality_df["check_name"].apply(
+            lambda x: translate_text(x, CHECK_TRANSLATIONS, default=str(x))
+        )
+        quality_df["description_fr"] = quality_df["check_name"].map(
+            QUALITY_DESCRIPTION_FR
+        ).fillna(quality_df.get("description", ""))
+
+    if "severity" in quality_df.columns:
+        quality_df["severity_fr"] = quality_df["severity"].apply(
+            lambda x: translate_text(x, QUALITY_TRANSLATIONS, default=str(x))
+        )
+
+    if "status" in quality_df.columns:
+        quality_df["status_quality_fr"] = quality_df["status"].apply(
+            lambda x: translate_text(x, QUALITY_TRANSLATIONS, default=str(x))
+        )
+
+    return quality_df
+
+
+def get_data_request_url() -> str:
+    """Construire le lien de demande d'accès aux données complètes."""
+    configured_url = str(get_config_value("DATA_REQUEST_URL", "") or "").strip()
+    if configured_url:
+        return configured_url
+
+    email = str(get_config_value("DATA_CONTACT_EMAIL", "") or "").strip()
+    if not email:
+        return ""
+
+    subject = quote("Demande d'accès aux données complètes - Projet Hydro-Québec")
+    body = quote(
+        "Bonjour,\n\n"
+        "Je souhaite obtenir un accès aux données historiques complètes du projet Hydro-Québec.\n\n"
+        "Merci."
+    )
+    return f"mailto:{email}?subject={subject}&body={body}"
+
+
+def render_full_data_access() -> None:
+    """Présenter l'accès aux données complètes sans les charger dans le dashboard public."""
+    render_section_header("Données historiques complètes", "Accès sur demande")
+    st.info(
+        "Pour préserver les performances du tableau de bord public, l'historique brut "
+        "et l'export complet des dernières observations ne sont pas chargés ici. "
+        "Ils peuvent être fournis sur demande pour la recherche, l'analyse ou un projet spécifique."
+    )
+
+    request_url = get_data_request_url()
+    if request_url:
+        st.link_button(
+            "✉️ Demander l'accès aux données complètes",
+            request_url,
+            width="stretch",
+        )
+    else:
+        st.caption(
+            "Pour afficher un bouton de contact, configure `DATA_CONTACT_EMAIL` "
+            "ou `DATA_REQUEST_URL` dans les secrets Streamlit."
+        )
 
 
 def enrich_raw_history(raw_df: pd.DataFrame, latest_df: pd.DataFrame) -> pd.DataFrame:
@@ -1431,54 +1534,12 @@ def active_filter_summary() -> str:
     return " · ".join(labels) if labels else "Aucun filtre actif"
 
 
+
 # =============================================================================
-# Chargement des données
+# Navigation et chargement paresseux des données
 # =============================================================================
 
 DATA_SOURCE = "Supabase" if using_supabase() else "CSV"
-
-if using_supabase():
-    active = add_display_columns(load_supabase_active())
-    latest = add_display_columns(load_supabase_latest())
-    daily = load_supabase_daily_summary()
-    quality = load_supabase_quality_report()
-    history_all = pd.DataFrame()
-else:
-    active = add_display_columns(load_csv(ACTIVE_FILE))
-    latest = add_display_columns(load_csv(LATEST_FILE))
-    daily = load_csv(DAILY_FILE)
-    quality = load_csv(QUALITY_FILE)
-    raw = add_display_columns(load_csv(RAW_FILE))
-    history_all = enrich_raw_history(raw, latest)
-
-if active.empty or latest.empty:
-    st.error(
-        "Les tables de pannes actives sont manquantes. Exécute d’abord "
-        "`python scripts/build_warehouse.py` puis `python scripts/export_tables.py`."
-    )
-    st.stop()
-
-if not quality.empty:
-    if "check_name" in quality.columns:
-        quality["check_name_fr"] = quality["check_name"].apply(
-            lambda x: translate_text(x, CHECK_TRANSLATIONS, default=str(x))
-        )
-        quality["description_fr"] = quality["check_name"].map(QUALITY_DESCRIPTION_FR).fillna(
-            quality.get("description", "")
-        )
-    if "severity" in quality.columns:
-        quality["severity_fr"] = quality["severity"].apply(
-            lambda x: translate_text(x, QUALITY_TRANSLATIONS, default=str(x))
-        )
-    if "status" in quality.columns:
-        quality["status_quality_fr"] = quality["status"].apply(
-            lambda x: translate_text(x, QUALITY_TRANSLATIONS, default=str(x))
-        )
-
-
-# =============================================================================
-# Navigation et chargement historique conditionnel
-# =============================================================================
 
 st.sidebar.markdown("## ⚡ Pannes Québec")
 st.sidebar.caption("Suivi opérationnel et analytique")
@@ -1503,29 +1564,57 @@ page = st.sidebar.radio(
 st.sidebar.divider()
 st.sidebar.caption(f"Source : {DATA_SOURCE}")
 
-selected_map_mode = st.session_state.get("map_mode", "Situation actuelle")
-history_needed_by_map = page == "Explorer la carte" and selected_map_mode != "Situation actuelle"
-preload_history = False
-
-if using_supabase():
-    preload_history = st.sidebar.toggle(
-        "Précharger l’historique",
-        value=False,
-        help="Utile pour les modes historiques de la carte ou pour télécharger l’historique.",
-        key="preload_history",
-    )
-
-if st.sidebar.button("Rafraîchir les données", width="stretch"):
-    st.cache_data.clear()
+if st.sidebar.button("🔄 Actualiser la situation actuelle", width="stretch"):
+    if using_supabase():
+        load_supabase_active.clear()
+    else:
+        load_csv.clear()
     st.rerun()
 
-if using_supabase() and (preload_history or history_needed_by_map):
-    with st.spinner("Chargement de l’historique Supabase..."):
-        history_all = add_display_columns(load_supabase_history())
+if using_supabase():
+    st.sidebar.caption(
+        "L'historique complet n'est pas chargé dans le tableau de bord public."
+    )
+
+# La situation actuelle est la seule source chargée sur toutes les pages.
+if using_supabase():
+    active = add_display_columns(load_supabase_active())
+else:
+    active = add_display_columns(load_csv(ACTIVE_FILE))
+
+if active.empty:
+    st.error(
+        "Les données de pannes actives sont manquantes ou indisponibles. "
+        "Vérifie la synchronisation des données puis réessaie."
+    )
+    st.stop()
+
+# Les jeux de données plus lourds restent vides tant que la page ne les demande pas.
+latest = pd.DataFrame()
+daily = pd.DataFrame()
+quality = pd.DataFrame()
+recent_outages = pd.DataFrame()
+latest_metrics = pd.DataFrame()
+history_all = pd.DataFrame()
+
+if using_supabase():
+    if page == "Vue d’ensemble":
+        daily = load_supabase_daily_summary()
+    elif page == "Surveillance":
+        recent_outages = add_display_columns(load_supabase_recent_outages(25))
+    elif page == "Qualité des données":
+        quality = prepare_quality_report(load_supabase_quality_report())
+        latest_metrics = load_supabase_latest_metrics()
+else:
+    # Le fallback CSV ne consomme pas de ressources Supabase; il peut rester complet.
+    latest = add_display_columns(load_csv(LATEST_FILE))
+    daily = load_csv(DAILY_FILE)
+    quality = prepare_quality_report(load_csv(QUALITY_FILE))
+    raw = add_display_columns(load_csv(RAW_FILE))
+    history_all = enrich_raw_history(raw, latest)
+    recent_outages = latest.head(25).copy()
 
 filter_source = active.copy()
-if not history_all.empty:
-    filter_source = pd.concat([active, history_all], ignore_index=True, sort=False)
 
 
 def reset_filter_state() -> None:
@@ -1554,12 +1643,11 @@ with st.sidebar.expander("Filtres", expanded=True):
         key="filter_major_threshold",
     )
 
-    max_customers = int(
-        pd.to_numeric(
-            active.get("customers_affected", pd.Series([1])),
-            errors="coerce",
-        ).max()
-    )
+    max_customer_value = pd.to_numeric(
+        active.get("customers_affected", pd.Series([1])),
+        errors="coerce",
+    ).max()
+    max_customers = int(max_customer_value) if pd.notna(max_customer_value) else 1
     max_customers = max(max_customers, 1)
 
     min_customers = st.slider(
@@ -1603,9 +1691,10 @@ with st.sidebar.expander("Filtres", expanded=True):
     )
 
     cause_values = []
-    for candidate in ["analysis_cause_label_fr", "history_cause_label_fr"]:
-        if candidate in filter_source.columns:
-            cause_values.extend(filter_source[candidate].dropna().astype(str).tolist())
+    if "analysis_cause_label_fr" in filter_source.columns:
+        cause_values.extend(
+            filter_source["analysis_cause_label_fr"].dropna().astype(str).tolist()
+        )
     selected_causes = st.multiselect(
         "Cause",
         sorted(set(cause_values)),
@@ -1644,7 +1733,7 @@ if selected_municipalities and "municipality_label" in filtered.columns:
 if selected_causes and "analysis_cause_label_fr" in filtered.columns:
     filtered = filtered[filtered["analysis_cause_label_fr"].isin(selected_causes)]
 
-updated_at = latest_timestamp(active, latest)
+updated_at = latest_timestamp(active)
 updated_display = format_quebec_datetime(updated_at)
 
 st.markdown(
@@ -1770,183 +1859,48 @@ if page == "Vue d’ensemble":
 # Explorateur cartographique
 # =============================================================================
 
+
 elif page == "Explorer la carte":
     render_page_header(
         "Exploration",
         "Carte des pannes",
-        "Une seule carte pour consulter la situation actuelle, une capture "
-        "précise ou une période historique.",
+        "Carte légère de la situation actuelle. Les captures historiques complètes "
+        "sont disponibles sur demande afin de préserver les performances du service public.",
     )
 
-    map_mode = st.radio(
-        "Temporalité",
-        ["Situation actuelle", "Date et heure précises", "Période historique"],
-        horizontal=True,
-        key="map_mode",
-    )
+    map_data = filtered.copy()
+    context = f"Situation observée le {updated_display}."
+    render_status(context, "good")
 
-    map_data = pd.DataFrame()
-    map_display_data = pd.DataFrame()
-    context = ""
-    max_map_points = None
-    download_name = "pannes_carte.csv"
-
-    if map_mode == "Situation actuelle":
-        map_data = filtered.copy()
-        map_display_data = map_data.copy()
-        context = f"Situation observée le {updated_display}."
-        download_name = "pannes_actives_carte.csv"
-
-    elif history_all.empty:
-        st.info(
-            "L’historique n’est pas encore chargé. La page se recharge "
-            "automatiquement après la sélection d’un mode historique. Sur "
-            "Supabase, tu peux aussi activer « Précharger l’historique » dans "
-            "la barre latérale."
-        )
-
-    elif "captured_at" not in history_all.columns:
-        st.error("La colonne `captured_at` est absente de l’historique.")
-
+    if map_data.empty:
+        st.info("Aucune panne à afficher selon les filtres actuels.")
     else:
-        history_source = history_all.dropna(subset=["captured_at"]).copy()
-
-        if map_mode == "Date et heure précises":
-            available_batches = (
-                history_source["captured_at"]
-                .dt.tz_convert("UTC")
-                .dt.floor("min")
-                .dt.tz_convert(QUEBEC_TIMEZONE)
-                .drop_duplicates()
-                .sort_values()
-                .tolist()
-            )
-
-            if available_batches:
-                min_dt = ensure_quebec_timestamp(available_batches[0])
-                max_dt = ensure_quebec_timestamp(available_batches[-1])
-                c1, c2, c3 = st.columns([1, 1, 1.15])
-                with c1:
-                    requested_date = st.date_input(
-                        "Date",
-                        value=max_dt.date(),
-                        min_value=min_dt.date(),
-                        max_value=max_dt.date(),
-                        key="map_requested_date",
-                    )
-                with c2:
-                    requested_time = st.time_input(
-                        "Heure du Québec",
-                        value=max_dt.time().replace(tzinfo=None, microsecond=0),
-                        key="map_requested_time",
-                    )
-                with c3:
-                    window_minutes = st.slider(
-                        "Tolérance autour de la capture",
-                        min_value=1,
-                        max_value=30,
-                        value=5,
-                        step=1,
-                        key="map_window_minutes",
-                    )
-
-                requested_dt = pd.Timestamp(
-                    datetime.combine(requested_date, requested_time)
-                ).tz_localize(
-                    QUEBEC_TIMEZONE,
-                    ambiguous=False,
-                    nonexistent="shift_forward",
-                )
-                nearest_batch = ensure_quebec_timestamp(
-                    min(
-                        available_batches,
-                        key=lambda value: abs(pd.Timestamp(value) - requested_dt),
-                    )
-                )
-                gap_minutes = abs((nearest_batch - requested_dt).total_seconds()) / 60
-                snapshot = build_active_snapshot_at_time(
-                    history_source,
-                    nearest_batch,
-                    window_minutes,
-                )
-                map_data = apply_global_filters_to_history(snapshot)
-                map_display_data = map_data.copy()
-                context = (
-                    f"Capture la plus proche : {format_quebec_datetime(nearest_batch)} · "
-                    f"écart {gap_minutes:.1f} min · fenêtre ±{window_minutes} min."
-                )
-                download_name = "snapshot_historique_pannes.csv"
-            else:
-                st.warning("Aucune capture historique disponible.")
-
-        else:
-            min_date = history_source["captured_at"].min().date()
-            max_date = history_source["captured_at"].max().date()
-            c1, c2 = st.columns([1.4, 1])
-            with c1:
-                selected_dates = st.date_input(
-                    "Période",
-                    value=(min_date, max_date),
-                    min_value=min_date,
-                    max_value=max_date,
-                    key="map_history_period",
-                )
-            with c2:
-                max_map_points = st.slider(
-                    "Points maximum",
-                    min_value=500,
-                    max_value=50000,
-                    value=12000,
-                    step=500,
-                    key="map_history_max_points",
-                )
-
-            if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
-                start_date, end_date = selected_dates
-                period_data = history_source[
-                    (history_source["captured_at"].dt.date >= start_date)
-                    & (history_source["captured_at"].dt.date <= end_date)
-                ].copy()
-                period_data = apply_global_filters_to_history(period_data)
-                map_data = period_data
-                map_display_data = representative_outages(period_data)
-                context = (
-                    f"Période du {start_date:%Y-%m-%d} au {end_date:%Y-%m-%d}. "
-                    "Un point représentatif est affiché par panne afin "
-                    "d’éviter les doublons de capture."
-                )
-                download_name = "historique_pannes_filtre.csv"
-
-    if context:
-        render_status(context, "good")
-
-    if not map_display_data.empty:
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Pannes uniques", format_int(unique_outage_count(map_display_data)))
+        k1.metric("Pannes uniques", format_int(unique_outage_count(map_data)))
         k2.metric(
             "Clients représentés",
-            format_int(safe_numeric_sum(map_display_data, "customers_affected")),
+            format_int(safe_numeric_sum(map_data, "customers_affected")),
         )
         k3.metric(
             "Municipalités",
             format_int(
-                map_display_data["municipality_label"].nunique()
-                if "municipality_label" in map_display_data.columns
+                map_data["municipality_label"].nunique()
+                if "municipality_label" in map_data.columns
                 else 0
             ),
         )
-        k4.metric("Points géocodés", format_int(len(get_geo(map_display_data))))
+        k4.metric("Points géocodés", format_int(len(get_geo(map_data))))
 
         map_col, side_col = st.columns([1.65, 0.85], gap="large")
         with map_col:
             render_section_header("Carte", "Taille des points : clients affectés")
-            render_clean_map(map_display_data, height=720, max_points=max_map_points)
+            render_clean_map(map_data, height=720)
 
         with side_col:
             render_section_header("Municipalités les plus touchées", "Top 8")
-            if {"municipality_label", "customers_affected"}.issubset(map_display_data.columns):
+            if {"municipality_label", "customers_affected"}.issubset(map_data.columns):
                 top_mun = (
-                    map_display_data.groupby("municipality_label", as_index=False)
+                    map_data.groupby("municipality_label", as_index=False)
                     .agg(clients_affectes=("customers_affected", "sum"))
                     .sort_values("clients_affectes", ascending=False)
                 )
@@ -1959,10 +1913,10 @@ elif page == "Explorer la carte":
                 )
 
             render_section_header("Causes", "Répartition")
-            cause_col = get_cause_column(map_display_data)
+            cause_col = get_cause_column(map_data)
             if cause_col:
                 cause_summary = (
-                    map_display_data[cause_col]
+                    map_data[cause_col]
                     .fillna("Inconnue")
                     .value_counts()
                     .rename_axis("cause")
@@ -1984,20 +1938,25 @@ elif page == "Explorer la carte":
                 "mrc_name",
                 "region_name",
                 "status_fr",
-                get_cause_column(map_display_data),
-                "captured_at",
+                get_cause_column(map_data),
                 "active_capture_at",
                 "start_time",
                 "estimated_restore",
             ]
             table_cols = [col for col in table_cols if col]
             table_data = (
-                map_display_data.sort_values("customers_affected", ascending=False)
-                if "customers_affected" in map_display_data.columns
-                else map_display_data
+                map_data.sort_values("customers_affected", ascending=False)
+                if "customers_affected" in map_data.columns
+                else map_data
             )
             show_table(table_data, table_cols, height=520)
-            make_download(map_data, "Télécharger les données sélectionnées", download_name)
+            make_download(
+                map_data,
+                "Télécharger les pannes actives de la carte",
+                "pannes_actives_carte.csv",
+            )
+
+    render_full_data_access()
 
 
 # =============================================================================
@@ -2250,7 +2209,7 @@ elif page == "Surveillance":
             st.info("La durée observée n’est pas disponible dans cette source.")
 
     render_section_header("Dernières pannes détectées", "25 premières")
-    recent = latest.copy()
+    recent = recent_outages.copy() if using_supabase() else latest.copy()
     if "first_capture_at" in recent.columns:
         recent = recent.sort_values("first_capture_at", ascending=False)
     recent_cols = [
@@ -2311,7 +2270,19 @@ elif page == "Qualité des données":
             if "status" in quality_checks.columns
             else 0
         )
-        geocoded_rate = bool_rate(latest["is_geocoded"]) if "is_geocoded" in latest.columns else 0
+
+        if using_supabase() and not latest_metrics.empty:
+            geocoded_rate_value = pd.to_numeric(
+                latest_metrics.iloc[0].get("geocoded_rate_pct", 0),
+                errors="coerce",
+            )
+            geocoded_rate = float(geocoded_rate_value) if pd.notna(geocoded_rate_value) else 0
+        else:
+            geocoded_rate = (
+                bool_rate(latest["is_geocoded"])
+                if "is_geocoded" in latest.columns
+                else 0
+            )
 
         k1, k2, k3 = st.columns(3)
         k1.metric("Contrôles réussis", format_int(passed_count))
@@ -2404,11 +2375,22 @@ elif page == "Qualité des données":
             "Limites de la source",
             "Non considérées comme des erreurs techniques",
         )
-        known_cause_rate = (
-            bool_rate(latest["has_known_cause"])
-            if "has_known_cause" in latest.columns
-            else 0
-        )
+        if using_supabase() and not latest_metrics.empty:
+            known_cause_rate_value = pd.to_numeric(
+                latest_metrics.iloc[0].get("known_cause_rate_pct", 0),
+                errors="coerce",
+            )
+            known_cause_rate = (
+                float(known_cause_rate_value)
+                if pd.notna(known_cause_rate_value)
+                else 0
+            )
+        else:
+            known_cause_rate = (
+                bool_rate(latest["has_known_cause"])
+                if "has_known_cause" in latest.columns
+                else 0
+            )
         raw_unknown_rows = 0
         raw_unknown_rate = 0.0
         if not source_limits.empty:
@@ -2448,23 +2430,22 @@ elif page == "Qualité des données":
 # Données
 # =============================================================================
 
+
 elif page == "Données":
     render_page_header(
-        "Export",
+        "Export public",
         "Données",
-        "Consulte et télécharge les principales tables du pipeline. "
-        "L’affichage est limité pour préserver les performances.",
+        "Le tableau de bord public fournit uniquement les petits jeux de données "
+        "nécessaires à la consultation courante. L'historique complet est disponible sur demande.",
     )
 
     table_name = st.selectbox(
-        "Table",
+        "Jeu de données public",
         [
             "Pannes actives filtrées",
             "Toutes les pannes actives",
-            "Dernière observation par panne",
             "Sommaire quotidien",
             "Rapport qualité",
-            "Historique brut enrichi",
         ],
     )
 
@@ -2477,30 +2458,29 @@ elif page == "Données":
     elif table_name == "Toutes les pannes actives":
         data_table = active
         filename = "pannes_actives.csv"
-    elif table_name == "Dernière observation par panne":
-        data_table = latest
-        filename = "dernieres_observations.csv"
     elif table_name == "Sommaire quotidien":
-        data_table = daily
+        if using_supabase():
+            with st.spinner("Chargement du sommaire quotidien..."):
+                data_table = load_supabase_daily_summary()
+        else:
+            data_table = daily
         filename = "sommaire_quotidien.csv"
     elif table_name == "Rapport qualité":
-        data_table = quality
+        if using_supabase():
+            with st.spinner("Chargement du rapport qualité..."):
+                data_table = prepare_quality_report(load_supabase_quality_report())
+        else:
+            data_table = quality
         filename = "rapport_qualite.csv"
-    else:
-        data_table = history_all
-        filename = "historique_pannes_enrichi.csv"
 
     if data_table.empty:
-        if table_name == "Historique brut enrichi" and using_supabase():
-            st.info(
-                "Active « Précharger l’historique » dans la barre latérale "
-                "pour rendre cette table disponible."
-            )
-        else:
-            st.info("Cette table est vide ou indisponible.")
+        st.info("Ce jeu de données est vide ou indisponible.")
     else:
         k1, k2 = st.columns(2)
         k1.metric("Lignes disponibles", format_int(len(data_table)))
         k2.metric("Colonnes", format_int(len(data_table.columns)))
         show_table(data_table, height=620)
         make_download(data_table, "Télécharger le fichier CSV", filename)
+
+    render_full_data_access()
+
