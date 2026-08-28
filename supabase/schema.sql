@@ -20,17 +20,19 @@ CREATE TABLE IF NOT EXISTS raw_outage_snapshots (
     CONSTRAINT raw_outage_snapshots_unique UNIQUE (outage_id, captured_at)
 );
 
-CREATE INDEX IF NOT EXISTS idx_raw_outage_snapshots_captured_at
-ON raw_outage_snapshots (captured_at);
+-- Index set intentionally kept small to reduce write amplification.
+-- The UNIQUE constraint above already provides an index starting with outage_id.
+CREATE INDEX IF NOT EXISTS idx_raw_outage_snapshots_outage_capture_desc
+ON raw_outage_snapshots (outage_id, captured_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_raw_outage_snapshots_outage_id
-ON raw_outage_snapshots (outage_id);
+CREATE INDEX IF NOT EXISTS idx_raw_outage_snapshots_capture_outage_desc
+ON raw_outage_snapshots (captured_at DESC, outage_id);
 
-CREATE INDEX IF NOT EXISTS idx_raw_outage_snapshots_municipality_id
-ON raw_outage_snapshots (municipality_id);
-
-CREATE INDEX IF NOT EXISTS idx_raw_outage_snapshots_lon_lat
-ON raw_outage_snapshots (lon, lat);
+CREATE INDEX IF NOT EXISTS idx_raw_outage_snapshots_known_cause_desc
+ON raw_outage_snapshots (outage_id, captured_at DESC)
+WHERE cause_label IS NOT NULL
+  AND TRIM(cause_label) <> ''
+  AND LOWER(TRIM(cause_label)) <> 'unknown';
 
 
 CREATE TABLE IF NOT EXISTS dim_municipalities (

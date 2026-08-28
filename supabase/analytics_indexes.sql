@@ -13,5 +13,3 @@ WHERE cause_label IS NOT NULL
   AND TRIM(cause_label) <> ''
   AND LOWER(TRIM(cause_label)) <> 'unknown';
 
-CREATE INDEX IF NOT EXISTS idx_raw_outage_snapshots_municipality_capture
-ON raw_outage_snapshots (municipality_id, captured_at DESC);
