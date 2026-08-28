@@ -17,6 +17,10 @@ RAW_FILE = Path(
     "data/raw/hydroquebec_history.csv"
 )
 
+CURRENT_SNAPSHOT_FILE = Path(
+    "data/raw/current_snapshot.csv"
+)
+
 MUNICIPALITIES_FILE = Path(
     "data/reference/municipalities.csv"
 )
@@ -27,7 +31,7 @@ MUNICIPALITY_BATCH_SIZE = 250
 # On resynchronise une petite fenêtre avant la dernière capture déjà présente.
 # Cela permet de récupérer d'éventuelles corrections ou arrivées tardives
 # sans renvoyer l'historique complet.
-DEFAULT_LOOKBACK_HOURS = 24
+DEFAULT_LOOKBACK_HOURS = 2
 
 
 RAW_COLUMNS = [
@@ -71,6 +75,23 @@ MUNICIPALITY_COLUMNS = [
 # =============================================================================
 # Helpers
 # =============================================================================
+
+def env_flag(
+    name: str,
+    default: bool = False,
+) -> bool:
+    value = os.environ.get(name)
+
+    if value is None:
+        return default
+
+    return value.strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
 
 def clean_value(
     value: Any,
@@ -227,6 +248,55 @@ def load_raw_history() -> pd.DataFrame:
             "outage_id",
             "captured_at",
         ],
+        keep="last",
+    )
+
+    return df
+
+
+def load_current_snapshot() -> pd.DataFrame:
+    """Load the small snapshot produced by fetch_outages.py."""
+    if not CURRENT_SNAPSHOT_FILE.exists():
+        return pd.DataFrame(columns=RAW_COLUMNS)
+
+    df = pd.read_csv(
+        CURRENT_SNAPSHOT_FILE,
+        low_memory=False,
+    )
+
+    datetime_columns = [
+        "start_time",
+        "estimated_restore",
+        "captured_at",
+    ]
+
+    for column in datetime_columns:
+        if column in df.columns:
+            df[column] = pd.to_datetime(
+                df[column],
+                errors="coerce",
+                utc=True,
+            )
+
+    numeric_columns = [
+        "customers_affected",
+        "cause_code",
+        "municipality_id",
+        "lon",
+        "lat",
+    ]
+
+    for column in numeric_columns:
+        if column in df.columns:
+            df[column] = pd.to_numeric(
+                df[column],
+                errors="coerce",
+            )
+
+    df = prepare_dataframe(df, RAW_COLUMNS)
+    df = df.dropna(subset=["outage_id", "captured_at"])
+    df = df.drop_duplicates(
+        subset=["outage_id", "captured_at"],
         keep="last",
     )
 
@@ -431,7 +501,10 @@ def sync_raw_history(
     df: pd.DataFrame,
 ) -> None:
     """
-    Upsert raw outage history in small transaction batches.
+    Insert immutable raw observations in small transaction batches.
+
+    A captured snapshot is treated as an event: if the same
+    (outage_id, captured_at) key is submitted again, it is ignored.
     """
     if df.empty:
         print(
@@ -454,64 +527,7 @@ def sync_raw_history(
             outage_id,
             captured_at
         )
-
-        DO UPDATE SET
-            customers_affected =
-                EXCLUDED.customers_affected,
-
-            start_time =
-                EXCLUDED.start_time,
-
-            estimated_restore =
-                EXCLUDED.estimated_restore,
-
-            status_code =
-                EXCLUDED.status_code,
-
-            status =
-                EXCLUDED.status,
-
-            cause_code =
-                EXCLUDED.cause_code,
-
-            cause_label =
-                EXCLUDED.cause_label,
-
-            municipality_id =
-                EXCLUDED.municipality_id,
-
-            lon =
-                EXCLUDED.lon,
-
-            lat =
-                EXCLUDED.lat,
-
-            ingested_at =
-                NOW()
-
-        WHERE (
-            raw_outage_snapshots.customers_affected,
-            raw_outage_snapshots.start_time,
-            raw_outage_snapshots.estimated_restore,
-            raw_outage_snapshots.status_code,
-            raw_outage_snapshots.status,
-            raw_outage_snapshots.cause_code,
-            raw_outage_snapshots.cause_label,
-            raw_outage_snapshots.municipality_id,
-            raw_outage_snapshots.lon,
-            raw_outage_snapshots.lat
-        ) IS DISTINCT FROM (
-            EXCLUDED.customers_affected,
-            EXCLUDED.start_time,
-            EXCLUDED.estimated_restore,
-            EXCLUDED.status_code,
-            EXCLUDED.status,
-            EXCLUDED.cause_code,
-            EXCLUDED.cause_label,
-            EXCLUDED.municipality_id,
-            EXCLUDED.lon,
-            EXCLUDED.lat
-        );
+        DO NOTHING;
     """
 
     total_records = len(
@@ -757,59 +773,98 @@ def sync_municipalities(
 
 
 # =============================================================================
-# Database summary
+# Lightweight validation / orchestration
 # =============================================================================
 
 def print_database_summary(
     connection,
+    synced_rows: int,
 ) -> None:
-    """
-    Print a small validation summary after synchronization.
-    """
+    """Print validation values without scanning the entire raw table."""
     with connection.cursor() as cursor:
         cursor.execute(
             """
-            SELECT
-                COUNT(*) AS total_rows,
-                COUNT(
-                    DISTINCT outage_id
-                ) AS unique_outages,
-                MIN(
-                    captured_at
-                ) AS first_capture,
-                MAX(
-                    captured_at
-                ) AS latest_capture
-
-            FROM raw_outage_snapshots;
+            SELECT captured_at
+            FROM raw_outage_snapshots
+            WHERE captured_at IS NOT NULL
+            ORDER BY captured_at DESC
+            LIMIT 1;
             """
         )
+        row = cursor.fetchone()
 
-        (
-            total_rows,
-            unique_outages,
-            first_capture,
-            latest_capture,
-        ) = cursor.fetchone()
+    latest_capture = row[0] if row else None
 
     print(
-        "Supabase total raw rows: "
-        f"{total_rows:,}"
+        "Raw rows submitted this run: "
+        f"{synced_rows:,}"
     )
-
-    print(
-        "Supabase unique outages: "
-        f"{unique_outages:,}"
-    )
-
-    print(
-        "Supabase first capture: "
-        f"{first_capture}"
-    )
-
     print(
         "Supabase latest capture: "
         f"{latest_capture}"
+    )
+
+
+def raw_table_is_empty(connection) -> bool:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT NOT EXISTS (
+                SELECT 1
+                FROM raw_outage_snapshots
+                LIMIT 1
+            );
+            """
+        )
+        return bool(cursor.fetchone()[0])
+
+
+def municipality_table_is_empty(connection) -> bool:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT NOT EXISTS (
+                SELECT 1
+                FROM dim_municipalities
+                LIMIT 1
+            );
+            """
+        )
+        return bool(cursor.fetchone()[0])
+
+
+def choose_raw_sync_dataframe(connection) -> pd.DataFrame:
+    """Prefer the current snapshot; use the full CSV only for bootstrap/fallback."""
+    if raw_table_is_empty(connection) and RAW_FILE.exists():
+        print(
+            "Supabase raw table is empty: bootstrapping from the local history CSV."
+        )
+        return load_raw_history()
+
+    snapshot = load_current_snapshot()
+
+    if not snapshot.empty:
+        print(
+            "Using current snapshot for incremental sync: "
+            f"{len(snapshot):,} rows."
+        )
+        return filter_incremental_raw_history(
+            connection,
+            snapshot,
+        )
+
+    if RAW_FILE.exists():
+        print(
+            "Current snapshot not found; falling back to the local history CSV."
+        )
+        return filter_incremental_raw_history(
+            connection,
+            load_raw_history(),
+        )
+
+    raise FileNotFoundError(
+        "Neither data/raw/current_snapshot.csv nor "
+        "data/raw/hydroquebec_history.csv is available."
     )
 
 
@@ -828,35 +883,14 @@ def main() -> None:
             "environment variable."
         )
 
-    raw_history = (
-        load_raw_history()
-    )
-
-    municipalities = (
-        load_municipalities()
-    )
-
-    print(
-        "Local raw rows available: "
-        f"{len(raw_history):,}"
-    )
-
-    print(
-        "Local municipality rows: "
-        f"{len(municipalities):,}"
-    )
-
     database_hostaddr = os.environ.get(
         "SUPABASE_DB_HOSTADDR"
     )
 
     connection_kwargs = {
-        "sslmode":
-            "require",
-        "connect_timeout":
-            15,
-        "application_name":
-            "projethydro_sync",
+        "sslmode": "require",
+        "connect_timeout": 15,
+        "application_name": "projethydro_sync",
     }
 
     if database_hostaddr:
@@ -870,26 +904,57 @@ def main() -> None:
     )
 
     try:
-        incremental_raw_history = (
-            filter_incremental_raw_history(
-                connection,
-                raw_history,
+        sync_raw = env_flag(
+            "SUPABASE_SYNC_RAW",
+            default=True,
+        )
+
+        synced_rows = 0
+
+        if sync_raw:
+            incremental_raw_history = choose_raw_sync_dataframe(
+                connection
             )
-        )
 
-        sync_raw_history(
-            connection,
-            incremental_raw_history,
-        )
+            print(
+                "Raw rows selected for this run: "
+                f"{len(incremental_raw_history):,}"
+            )
 
-        sync_municipalities(
-            connection,
-            municipalities,
-        )
+            sync_raw_history(
+                connection,
+                incremental_raw_history,
+            )
+            synced_rows = len(incremental_raw_history)
+        else:
+            print("Raw synchronization disabled for this run.")
 
-        print_database_summary(
-            connection
-        )
+        sync_municipality_reference = env_flag(
+            "SUPABASE_SYNC_MUNICIPALITIES",
+            default=False,
+        ) or municipality_table_is_empty(connection)
+
+        if sync_municipality_reference:
+            municipalities = load_municipalities()
+            print(
+                "Municipality rows selected: "
+                f"{len(municipalities):,}"
+            )
+            sync_municipalities(
+                connection,
+                municipalities,
+            )
+        else:
+            print(
+                "Municipality synchronization skipped. "
+                "Use SUPABASE_SYNC_MUNICIPALITIES=1 for a maintenance run."
+            )
+
+        if sync_raw:
+            print_database_summary(
+                connection,
+                synced_rows=synced_rows,
+            )
 
     finally:
         connection.close()
@@ -897,4 +962,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

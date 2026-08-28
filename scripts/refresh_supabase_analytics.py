@@ -142,13 +142,461 @@ def mark_heavy_refresh_complete(connection) -> None:
     print("Heavy analytics refresh timestamp updated.")
 
 
+
+def force_latest_rebuild() -> bool:
+    value = os.environ.get(
+        "SUPABASE_FORCE_LATEST_REBUILD",
+        "",
+    )
+    return value.strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def ensure_incremental_tables(connection) -> None:
+    """Create persistent analytical tables and their indexes once."""
+    execute_step(
+        connection,
+        "ensure incremental analytical tables",
+        """
+        SET statement_timeout = '120s';
+
+        CREATE TABLE IF NOT EXISTS app_latest_outages (
+            outage_id TEXT NOT NULL,
+            customers_affected INTEGER,
+            start_time TIMESTAMP,
+            estimated_restore TIMESTAMP,
+            status_code TEXT,
+            status TEXT,
+            latest_raw_cause_code DOUBLE PRECISION,
+            latest_raw_cause_label TEXT,
+            analysis_cause_code DOUBLE PRECISION,
+            analysis_cause_label TEXT,
+            has_known_cause BOOLEAN,
+            known_cause_last_seen_at TIMESTAMP,
+            municipality_id INTEGER,
+            municipality_label TEXT,
+            municipality_name TEXT,
+            municipality_full_name TEXT,
+            mrc_name TEXT,
+            region_name TEXT,
+            is_geocoded BOOLEAN,
+            latest_row_captured_at TIMESTAMP,
+            first_capture_at TIMESTAMP,
+            last_capture_at TIMESTAMP,
+            capture_count BIGINT,
+            observed_duration_hours DOUBLE PRECISION,
+            outage_age_hours_at_latest_capture DOUBLE PRECISION,
+            restore_eta_hours_at_latest_capture DOUBLE PRECISION,
+            lon DOUBLE PRECISION,
+            lat DOUBLE PRECISION,
+            is_major_outage BOOLEAN
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_app_latest_outages_outage_id
+        ON app_latest_outages (outage_id);
+
+        CREATE INDEX IF NOT EXISTS idx_app_latest_outages_sort
+        ON app_latest_outages (
+            last_capture_at DESC,
+            customers_affected DESC
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_app_latest_outages_first_capture
+        ON app_latest_outages (first_capture_at DESC);
+
+        CREATE TABLE IF NOT EXISTS app_active_outages (
+            LIKE app_latest_outages INCLUDING DEFAULTS
+        );
+
+        ALTER TABLE app_active_outages
+        ADD COLUMN IF NOT EXISTS active_capture_at TIMESTAMP;
+
+        ALTER TABLE app_active_outages
+        ADD COLUMN IF NOT EXISTS outage_age_hours_at_capture DOUBLE PRECISION;
+
+        ALTER TABLE app_active_outages
+        ADD COLUMN IF NOT EXISTS restore_eta_hours_at_capture DOUBLE PRECISION;
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_app_active_outages_outage_id
+        ON app_active_outages (outage_id);
+
+        CREATE INDEX IF NOT EXISTS idx_app_active_outages_customers
+        ON app_active_outages (customers_affected DESC);
+
+        """,
+    )
+
+
+def latest_table_needs_bootstrap(connection) -> bool:
+    if force_latest_rebuild():
+        print("Full app_latest_outages rebuild forced by environment.")
+        return True
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT NOT EXISTS (
+                SELECT 1
+                FROM app_latest_outages
+                LIMIT 1
+            );
+            """
+        )
+        return bool(cursor.fetchone()[0])
+
+
+def prepare_affected_outage_ids(connection, bootstrap: bool) -> int:
+    """Build a tiny temp table containing only outage IDs to recompute."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            CREATE TEMP TABLE IF NOT EXISTS _affected_outage_ids (
+                outage_id TEXT PRIMARY KEY
+            ) ON COMMIT PRESERVE ROWS;
+
+            TRUNCATE TABLE _affected_outage_ids;
+            """
+        )
+
+        if bootstrap:
+            cursor.execute(
+                """
+                INSERT INTO _affected_outage_ids (outage_id)
+                SELECT DISTINCT outage_id
+                FROM raw_outage_snapshots
+                WHERE outage_id IS NOT NULL;
+                """
+            )
+        else:
+            cursor.execute(
+                """
+                WITH latest_capture AS (
+                    SELECT captured_at AS max_captured_at
+                    FROM raw_outage_snapshots
+                    WHERE captured_at IS NOT NULL
+                    ORDER BY captured_at DESC
+                    LIMIT 1
+                )
+                INSERT INTO _affected_outage_ids (outage_id)
+                SELECT DISTINCT r.outage_id
+                FROM raw_outage_snapshots r
+                CROSS JOIN latest_capture l
+                WHERE r.outage_id IS NOT NULL
+                  AND r.captured_at BETWEEN l.max_captured_at - INTERVAL '5 minutes'
+                                        AND l.max_captured_at;
+                """
+            )
+
+        cursor.execute("SELECT COUNT(*) FROM _affected_outage_ids;")
+        affected_count = int(cursor.fetchone()[0])
+
+    connection.commit()
+    print(f"Outage IDs selected for latest-table refresh: {affected_count:,}")
+    return affected_count
+
+
+def refresh_latest_incrementally(connection, bootstrap: bool) -> int:
+    affected_count = prepare_affected_outage_ids(connection, bootstrap)
+
+    if affected_count == 0:
+        print("No outage IDs require an app_latest_outages update.")
+        return 0
+
+    execute_step(
+        connection,
+        "incremental refresh app_latest_outages",
+        """
+        SET statement_timeout = '120s';
+
+        WITH latest_per_outage AS (
+            SELECT DISTINCT ON (r.outage_id)
+                r.*
+            FROM raw_outage_snapshots r
+            INNER JOIN _affected_outage_ids a
+                ON r.outage_id = a.outage_id
+            WHERE r.captured_at IS NOT NULL
+            ORDER BY r.outage_id, r.captured_at DESC
+        ),
+
+        capture_stats AS (
+            SELECT
+                r.outage_id,
+                MIN(r.captured_at) AS first_capture_at,
+                MAX(r.captured_at) AS last_capture_at,
+                COUNT(*) AS capture_count
+            FROM raw_outage_snapshots r
+            INNER JOIN _affected_outage_ids a
+                ON r.outage_id = a.outage_id
+            WHERE r.captured_at IS NOT NULL
+            GROUP BY r.outage_id
+        ),
+
+        known_cause AS (
+            SELECT DISTINCT ON (r.outage_id)
+                r.outage_id,
+                r.cause_code AS known_cause_code,
+                r.cause_label AS known_cause_label,
+                r.captured_at AS known_cause_last_seen_at
+            FROM raw_outage_snapshots r
+            INNER JOIN _affected_outage_ids a
+                ON r.outage_id = a.outage_id
+            WHERE r.cause_label IS NOT NULL
+              AND TRIM(r.cause_label) <> ''
+              AND LOWER(TRIM(r.cause_label)) <> 'unknown'
+            ORDER BY r.outage_id, r.captured_at DESC
+        )
+
+        INSERT INTO app_latest_outages (
+            outage_id,
+            customers_affected,
+            start_time,
+            estimated_restore,
+            status_code,
+            status,
+            latest_raw_cause_code,
+            latest_raw_cause_label,
+            analysis_cause_code,
+            analysis_cause_label,
+            has_known_cause,
+            known_cause_last_seen_at,
+            municipality_id,
+            municipality_label,
+            municipality_name,
+            municipality_full_name,
+            mrc_name,
+            region_name,
+            is_geocoded,
+            latest_row_captured_at,
+            first_capture_at,
+            last_capture_at,
+            capture_count,
+            observed_duration_hours,
+            outage_age_hours_at_latest_capture,
+            restore_eta_hours_at_latest_capture,
+            lon,
+            lat,
+            is_major_outage
+        )
+        SELECT
+            r.outage_id,
+            r.customers_affected,
+            r.start_time,
+            r.estimated_restore,
+            r.status_code,
+            r.status,
+            r.cause_code AS latest_raw_cause_code,
+            r.cause_label AS latest_raw_cause_label,
+            COALESCE(k.known_cause_code, r.cause_code) AS analysis_cause_code,
+            COALESCE(k.known_cause_label, r.cause_label, 'unknown') AS analysis_cause_label,
+            (k.known_cause_label IS NOT NULL) AS has_known_cause,
+            k.known_cause_last_seen_at,
+            r.municipality_id,
+            COALESCE(
+                m.municipality_label,
+                'Municipalité ' || CAST(r.municipality_id AS TEXT)
+            ) AS municipality_label,
+            m.municipality_name,
+            m.municipality_full_name,
+            m.mrc_name,
+            m.region_name,
+            m.is_geocoded,
+            r.captured_at AS latest_row_captured_at,
+            s.first_capture_at,
+            s.last_capture_at,
+            s.capture_count,
+            EXTRACT(EPOCH FROM (s.last_capture_at - s.first_capture_at)) / 3600.0,
+            EXTRACT(EPOCH FROM (r.captured_at - r.start_time)) / 3600.0,
+            EXTRACT(EPOCH FROM (r.estimated_restore - r.captured_at)) / 3600.0,
+            r.lon,
+            r.lat,
+            (r.customers_affected >= 1000) AS is_major_outage
+        FROM latest_per_outage r
+        LEFT JOIN capture_stats s
+            ON r.outage_id = s.outage_id
+        LEFT JOIN known_cause k
+            ON r.outage_id = k.outage_id
+        LEFT JOIN dim_municipalities m
+            ON r.municipality_id = m.municipality_id
+
+        ON CONFLICT (outage_id)
+        DO UPDATE SET
+            customers_affected = EXCLUDED.customers_affected,
+            start_time = EXCLUDED.start_time,
+            estimated_restore = EXCLUDED.estimated_restore,
+            status_code = EXCLUDED.status_code,
+            status = EXCLUDED.status,
+            latest_raw_cause_code = EXCLUDED.latest_raw_cause_code,
+            latest_raw_cause_label = EXCLUDED.latest_raw_cause_label,
+            analysis_cause_code = EXCLUDED.analysis_cause_code,
+            analysis_cause_label = EXCLUDED.analysis_cause_label,
+            has_known_cause = EXCLUDED.has_known_cause,
+            known_cause_last_seen_at = EXCLUDED.known_cause_last_seen_at,
+            municipality_id = EXCLUDED.municipality_id,
+            municipality_label = EXCLUDED.municipality_label,
+            municipality_name = EXCLUDED.municipality_name,
+            municipality_full_name = EXCLUDED.municipality_full_name,
+            mrc_name = EXCLUDED.mrc_name,
+            region_name = EXCLUDED.region_name,
+            is_geocoded = EXCLUDED.is_geocoded,
+            latest_row_captured_at = EXCLUDED.latest_row_captured_at,
+            first_capture_at = EXCLUDED.first_capture_at,
+            last_capture_at = EXCLUDED.last_capture_at,
+            capture_count = EXCLUDED.capture_count,
+            observed_duration_hours = EXCLUDED.observed_duration_hours,
+            outage_age_hours_at_latest_capture = EXCLUDED.outage_age_hours_at_latest_capture,
+            restore_eta_hours_at_latest_capture = EXCLUDED.restore_eta_hours_at_latest_capture,
+            lon = EXCLUDED.lon,
+            lat = EXCLUDED.lat,
+            is_major_outage = EXCLUDED.is_major_outage;
+        """,
+    )
+
+    return affected_count
+
+
+def refresh_active_outages(connection) -> None:
+    """Refresh only the small active table while preserving its indexes."""
+    execute_step(
+        connection,
+        "refresh app_active_outages",
+        """
+        SET statement_timeout = '120s';
+
+        TRUNCATE TABLE app_active_outages;
+
+        WITH latest_capture AS (
+            SELECT captured_at AS max_captured_at
+            FROM raw_outage_snapshots
+            WHERE captured_at IS NOT NULL
+            ORDER BY captured_at DESC
+            LIMIT 1
+        ),
+
+        active_ids AS (
+            SELECT DISTINCT ON (r.outage_id)
+                r.outage_id,
+                r.captured_at AS active_capture_at
+            FROM raw_outage_snapshots r
+            CROSS JOIN latest_capture l
+            WHERE r.outage_id IS NOT NULL
+              AND r.captured_at BETWEEN l.max_captured_at - INTERVAL '5 minutes'
+                                    AND l.max_captured_at
+            ORDER BY r.outage_id, r.captured_at DESC
+        )
+
+        INSERT INTO app_active_outages (
+            outage_id,
+            customers_affected,
+            start_time,
+            estimated_restore,
+            status_code,
+            status,
+            latest_raw_cause_code,
+            latest_raw_cause_label,
+            analysis_cause_code,
+            analysis_cause_label,
+            has_known_cause,
+            known_cause_last_seen_at,
+            municipality_id,
+            municipality_label,
+            municipality_name,
+            municipality_full_name,
+            mrc_name,
+            region_name,
+            is_geocoded,
+            latest_row_captured_at,
+            first_capture_at,
+            last_capture_at,
+            capture_count,
+            observed_duration_hours,
+            outage_age_hours_at_latest_capture,
+            restore_eta_hours_at_latest_capture,
+            lon,
+            lat,
+            is_major_outage,
+            active_capture_at,
+            outage_age_hours_at_capture,
+            restore_eta_hours_at_capture
+        )
+        SELECT
+            l.outage_id,
+            l.customers_affected,
+            l.start_time,
+            l.estimated_restore,
+            l.status_code,
+            l.status,
+            l.latest_raw_cause_code,
+            l.latest_raw_cause_label,
+            l.analysis_cause_code,
+            l.analysis_cause_label,
+            l.has_known_cause,
+            l.known_cause_last_seen_at,
+            l.municipality_id,
+            l.municipality_label,
+            l.municipality_name,
+            l.municipality_full_name,
+            l.mrc_name,
+            l.region_name,
+            l.is_geocoded,
+            l.latest_row_captured_at,
+            l.first_capture_at,
+            l.last_capture_at,
+            l.capture_count,
+            l.observed_duration_hours,
+            l.outage_age_hours_at_latest_capture,
+            l.restore_eta_hours_at_latest_capture,
+            l.lon,
+            l.lat,
+            l.is_major_outage,
+            a.active_capture_at,
+            l.outage_age_hours_at_latest_capture,
+            l.restore_eta_hours_at_latest_capture
+        FROM app_latest_outages l
+        INNER JOIN active_ids a
+            ON l.outage_id = a.outage_id;
+        """,
+    )
+
+
+def print_lightweight_summary(connection, affected_count: int) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT latest_row_captured_at
+            FROM app_latest_outages
+            WHERE latest_row_captured_at IS NOT NULL
+            ORDER BY latest_row_captured_at DESC
+            LIMIT 1;
+            """
+        )
+        row = cursor.fetchone()
+        latest_capture = row[0] if row else None
+
+        cursor.execute(
+            """
+            SELECT COUNT(*), MAX(active_capture_at)
+            FROM app_active_outages;
+            """
+        )
+        active_count, active_capture = cursor.fetchone()
+
+    print(f"app_latest_outages rows recomputed: {affected_count:,}")
+    print(f"app_latest_outages latest capture: {latest_capture}")
+    print(f"app_active_outages rows: {active_count:,}")
+    print(f"app_active_outages latest capture: {active_capture}")
+
+
 def main() -> None:
     connection = connect()
 
     try:
         execute_step(
             connection,
-            "create performance indexes",
+            "ensure performance indexes",
             """
             SET statement_timeout = '120s';
 
@@ -163,178 +611,18 @@ def main() -> None:
             WHERE cause_label IS NOT NULL
               AND TRIM(cause_label) <> ''
               AND LOWER(TRIM(cause_label)) <> 'unknown';
-
-            CREATE INDEX IF NOT EXISTS idx_raw_outage_snapshots_municipality_capture
-            ON raw_outage_snapshots (municipality_id, captured_at DESC);
             """,
         )
 
         ensure_refresh_state_table(connection)
+        ensure_incremental_tables(connection)
 
-        execute_step(
+        bootstrap = latest_table_needs_bootstrap(connection)
+        affected_count = refresh_latest_incrementally(
             connection,
-            "refresh app_latest_outages",
-            """
-            SET statement_timeout = '120s';
-
-            DROP TABLE IF EXISTS app_latest_outages;
-
-            CREATE TABLE app_latest_outages AS
-            WITH latest_per_outage AS (
-                SELECT DISTINCT ON (r.outage_id)
-                    r.*
-                FROM raw_outage_snapshots r
-                WHERE r.outage_id IS NOT NULL
-                  AND r.captured_at IS NOT NULL
-                ORDER BY r.outage_id, r.captured_at DESC
-            ),
-
-            capture_stats AS (
-                SELECT
-                    outage_id,
-                    MIN(captured_at) AS first_capture_at,
-                    MAX(captured_at) AS last_capture_at,
-                    COUNT(*) AS capture_count
-                FROM raw_outage_snapshots
-                WHERE outage_id IS NOT NULL
-                  AND captured_at IS NOT NULL
-                GROUP BY outage_id
-            ),
-
-            known_cause AS (
-                SELECT DISTINCT ON (outage_id)
-                    outage_id,
-                    cause_code AS known_cause_code,
-                    cause_label AS known_cause_label,
-                    captured_at AS known_cause_last_seen_at
-                FROM raw_outage_snapshots
-                WHERE outage_id IS NOT NULL
-                  AND cause_label IS NOT NULL
-                  AND TRIM(cause_label) <> ''
-                  AND LOWER(TRIM(cause_label)) <> 'unknown'
-                ORDER BY outage_id, captured_at DESC
-            )
-
-            SELECT
-                r.outage_id,
-                r.customers_affected,
-                r.start_time,
-                r.estimated_restore,
-                r.status_code,
-                r.status,
-
-                r.cause_code AS latest_raw_cause_code,
-                r.cause_label AS latest_raw_cause_label,
-
-                COALESCE(k.known_cause_code, r.cause_code) AS analysis_cause_code,
-                COALESCE(k.known_cause_label, r.cause_label, 'unknown') AS analysis_cause_label,
-
-                CASE
-                    WHEN k.known_cause_label IS NOT NULL THEN TRUE
-                    ELSE FALSE
-                END AS has_known_cause,
-
-                k.known_cause_last_seen_at,
-
-                r.municipality_id,
-                COALESCE(
-                    m.municipality_label,
-                    'Municipalité ' || CAST(r.municipality_id AS TEXT)
-                ) AS municipality_label,
-                m.municipality_name,
-                m.municipality_full_name,
-                m.mrc_name,
-                m.region_name,
-                m.is_geocoded,
-
-                r.captured_at AS latest_row_captured_at,
-
-                s.first_capture_at,
-                s.last_capture_at,
-                s.capture_count,
-
-                EXTRACT(EPOCH FROM (s.last_capture_at - s.first_capture_at)) / 3600.0
-                    AS observed_duration_hours,
-                EXTRACT(EPOCH FROM (r.captured_at - r.start_time)) / 3600.0
-                    AS outage_age_hours_at_latest_capture,
-                EXTRACT(EPOCH FROM (r.estimated_restore - r.captured_at)) / 3600.0
-                    AS restore_eta_hours_at_latest_capture,
-
-                r.lon,
-                r.lat,
-
-                CASE
-                    WHEN r.customers_affected >= 1000 THEN TRUE
-                    ELSE FALSE
-                END AS is_major_outage
-            FROM latest_per_outage r
-            LEFT JOIN capture_stats s
-                ON r.outage_id = s.outage_id
-            LEFT JOIN known_cause k
-                ON r.outage_id = k.outage_id
-            LEFT JOIN dim_municipalities m
-                ON r.municipality_id = m.municipality_id;
-
-            CREATE INDEX IF NOT EXISTS idx_app_latest_outages_last_capture
-            ON app_latest_outages (last_capture_at DESC);
-
-            CREATE INDEX IF NOT EXISTS idx_app_latest_outages_customers
-            ON app_latest_outages (customers_affected DESC);
-
-            CREATE INDEX IF NOT EXISTS idx_app_latest_outages_region
-            ON app_latest_outages (region_name);
-
-            CREATE INDEX IF NOT EXISTS idx_app_latest_outages_sort
-            ON app_latest_outages (
-                last_capture_at DESC,
-                customers_affected DESC
-            );
-            """,
+            bootstrap=bootstrap,
         )
-
-        execute_step(
-            connection,
-            "refresh app_active_outages",
-            """
-            SET statement_timeout = '120s';
-
-            DROP TABLE IF EXISTS app_active_outages;
-
-            CREATE TABLE app_active_outages AS
-            WITH latest_capture AS (
-                SELECT MAX(captured_at) AS max_captured_at
-                FROM raw_outage_snapshots
-                WHERE captured_at IS NOT NULL
-            ),
-
-            active_ids AS (
-                SELECT DISTINCT ON (r.outage_id)
-                    r.outage_id,
-                    r.captured_at AS active_capture_at
-                FROM raw_outage_snapshots r
-                CROSS JOIN latest_capture l
-                WHERE r.outage_id IS NOT NULL
-                  AND r.captured_at BETWEEN l.max_captured_at - INTERVAL '5 minutes'
-                                        AND l.max_captured_at
-                ORDER BY r.outage_id, r.captured_at DESC
-            )
-
-            SELECT
-                l.*,
-                a.active_capture_at,
-                l.outage_age_hours_at_latest_capture AS outage_age_hours_at_capture,
-                l.restore_eta_hours_at_latest_capture AS restore_eta_hours_at_capture
-            FROM app_latest_outages l
-            INNER JOIN active_ids a
-                ON l.outage_id = a.outage_id;
-
-            CREATE INDEX IF NOT EXISTS idx_app_active_outages_customers
-            ON app_active_outages (customers_affected DESC);
-
-            CREATE INDEX IF NOT EXISTS idx_app_active_outages_region
-            ON app_active_outages (region_name);
-            """,
-        )
+        refresh_active_outages(connection)
 
         if heavy_refresh_is_due(connection):
             execute_step(
@@ -592,17 +880,10 @@ def main() -> None:
             """,
         )
 
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT COUNT(*), MAX(latest_row_captured_at) FROM app_latest_outages;")
-            latest_count, latest_capture = cursor.fetchone()
-
-            cursor.execute("SELECT COUNT(*), MAX(active_capture_at) FROM app_active_outages;")
-            active_count, active_capture = cursor.fetchone()
-
-        print(f"app_latest_outages rows: {latest_count:,}")
-        print(f"app_latest_outages latest capture: {latest_capture}")
-        print(f"app_active_outages rows: {active_count:,}")
-        print(f"app_active_outages latest capture: {active_capture}")
+        print_lightweight_summary(
+            connection,
+            affected_count=affected_count,
+        )
 
     finally:
         connection.close()
