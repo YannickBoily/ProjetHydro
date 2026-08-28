@@ -1,12 +1,12 @@
-name: Update Hydro Outages
+name: Hydro Weekly Maintenance
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "20 5 * * 0"
   workflow_dispatch:
 
 jobs:
-  update_outages:
+  maintenance:
     runs-on: ubuntu-latest
 
     steps:
@@ -23,26 +23,18 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Prepare raw data directory
-        run: mkdir -p data/raw
-
-      - name: Fetch current outage snapshot
-        env:
-          # Supabase is the production history store. Avoid rewriting the
-          # complete local CSV on every hourly GitHub Actions run.
-          HYDRO_WRITE_LOCAL_HISTORY: "0"
-        run: python scripts/fetch_outages.py
-
-      - name: Sync current snapshot to Supabase
+      - name: Sync municipality reference
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SUPABASE_DB_HOSTADDR: ${{ secrets.SUPABASE_DB_HOSTADDR }}
-          SUPABASE_SYNC_LOOKBACK_HOURS: "2"
-          SUPABASE_SYNC_MUNICIPALITIES: "0"
+          SUPABASE_SYNC_RAW: "0"
+          SUPABASE_SYNC_MUNICIPALITIES: "1"
         run: python scripts/sync_to_supabase.py
 
-      - name: Incrementally refresh Supabase analytics
+      - name: Reconcile analytical tables
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SUPABASE_DB_HOSTADDR: ${{ secrets.SUPABASE_DB_HOSTADDR }}
+          SUPABASE_FORCE_LATEST_REBUILD: "1"
+          SUPABASE_FORCE_HEAVY_REFRESH: "1"
         run: python scripts/refresh_supabase_analytics.py
