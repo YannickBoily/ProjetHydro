@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import html
 import os
+import re
+import smtplib
+import ssl
 from datetime import datetime
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 import pandas as pd
 import plotly.express as px
@@ -861,46 +864,244 @@ def prepare_quality_report(df: pd.DataFrame) -> pd.DataFrame:
     return quality_df
 
 
-def get_data_request_url() -> str:
-    """Construire le lien de demande d'accès aux données complètes."""
-    configured_url = str(get_config_value("DATA_REQUEST_URL", "") or "").strip()
-    if configured_url:
-        return configured_url
+DATA_REQUEST_DATASETS = [
+    "Historique complet des observations",
+    "Dernières observations par panne",
+    "Pannes actives",
+    "Sommaire quotidien",
+    "Rapport de qualité",
+    "Autre / besoin spécifique",
+]
 
-    email = str(get_config_value("DATA_CONTACT_EMAIL", "") or "").strip()
-    if not email:
-        return ""
+DATA_REQUEST_USE_CASES = [
+    "Recherche",
+    "Analyse de données",
+    "Projet étudiant",
+    "Projet professionnel",
+    "Journalisme / média",
+    "Autre",
+]
 
-    subject = quote("Demande d'accès aux données complètes - Projet Hydro-Québec")
-    body = quote(
-        "Bonjour,\n\n"
-        "Je souhaite obtenir un accès aux données historiques complètes du projet Hydro-Québec.\n\n"
-        "Merci."
+
+def _config_bool(name: str, default: bool = False) -> bool:
+    """Lire une option booléenne depuis l'environnement ou les secrets Streamlit."""
+    value = get_config_value(name, str(default))
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def data_request_email_is_configured() -> bool:
+    """Vérifier que le minimum requis pour envoyer une demande par courriel est présent."""
+    recipient = str(
+        get_config_value("DATA_REQUEST_TO_EMAIL", "")
+        or get_config_value("DATA_CONTACT_EMAIL", "")
+        or ""
+    ).strip()
+    smtp_host = str(get_config_value("SMTP_HOST", "") or "").strip()
+    smtp_from = str(
+        get_config_value("SMTP_FROM_EMAIL", "")
+        or get_config_value("SMTP_USERNAME", "")
+        or ""
+    ).strip()
+    return bool(recipient and smtp_host and smtp_from)
+
+
+def is_valid_email(value: str) -> bool:
+    """Validation légère d'une adresse courriel avant l'envoi SMTP."""
+    value = str(value or "").strip()
+    if len(value) > 254 or "\n" in value or "\r" in value:
+        return False
+    return bool(re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value))
+
+
+def send_data_request_email(
+    requester_name: str,
+    requester_email: str,
+    organization: str,
+    requested_dataset: str,
+    use_case: str,
+    details: str,
+) -> None:
+    """Envoyer une demande d'accès sans déclencher de requête d'export Supabase."""
+    recipient = str(
+        get_config_value("DATA_REQUEST_TO_EMAIL", "")
+        or get_config_value("DATA_CONTACT_EMAIL", "")
+        or ""
+    ).strip()
+    smtp_host = str(get_config_value("SMTP_HOST", "") or "").strip()
+    smtp_port = int(get_config_value("SMTP_PORT", "587"))
+    smtp_username = str(get_config_value("SMTP_USERNAME", "") or "").strip()
+    smtp_password = str(get_config_value("SMTP_PASSWORD", "") or "")
+    smtp_from = str(
+        get_config_value("SMTP_FROM_EMAIL", "")
+        or smtp_username
+        or ""
+    ).strip()
+    use_ssl = _config_bool("SMTP_USE_SSL", False)
+    use_tls = _config_bool("SMTP_USE_TLS", not use_ssl)
+
+    if not recipient or not smtp_host or not smtp_from:
+        raise RuntimeError(
+            "La configuration SMTP est incomplète. "
+            "Vérifie DATA_REQUEST_TO_EMAIL, SMTP_HOST et SMTP_FROM_EMAIL."
+        )
+
+    # Ne jamais placer une valeur utilisateur non filtrée dans un en-tête.
+    safe_name = requester_name.replace("\r", " ").replace("\n", " ").strip()
+    safe_reply_to = requester_email.replace("\r", "").replace("\n", "").strip()
+
+    message = EmailMessage()
+    message["Subject"] = f"Demande d'accès aux données — {requested_dataset}"
+    message["From"] = smtp_from
+    message["To"] = recipient
+    message["Reply-To"] = safe_reply_to
+
+    submitted_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    message.set_content(
+        "Nouvelle demande d'accès aux données du projet Hydro-Québec\n\n"
+        f"Nom : {safe_name}\n"
+        f"Courriel : {safe_reply_to}\n"
+        f"Organisation : {organization.strip() or 'Non précisée'}\n"
+        f"Données demandées : {requested_dataset}\n"
+        f"Utilisation prévue : {use_case}\n"
+        f"Date de la demande : {submitted_at}\n\n"
+        "Détails :\n"
+        f"{details.strip() or 'Aucun détail supplémentaire.'}\n"
     )
-    return f"mailto:{email}?subject={subject}&body={body}"
+
+    if use_ssl:
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(
+            smtp_host,
+            smtp_port,
+            timeout=20,
+            context=context,
+        ) as server:
+            if smtp_username:
+                server.login(smtp_username, smtp_password)
+            server.send_message(message)
+        return
+
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
+        server.ehlo()
+        if use_tls:
+            context = ssl.create_default_context()
+            server.starttls(context=context)
+            server.ehlo()
+        if smtp_username:
+            server.login(smtp_username, smtp_password)
+        server.send_message(message)
 
 
 def render_full_data_access() -> None:
-    """Présenter l'accès aux données complètes sans les charger dans le dashboard public."""
-    render_section_header("Données historiques complètes", "Accès sur demande")
+    """Afficher un formulaire de demande sans exposer de téléchargement direct."""
+    render_section_header("Accès aux données", "Sur demande seulement")
     st.info(
-        "Pour préserver les performances du tableau de bord public, l'historique brut "
-        "et l'export complet des dernières observations ne sont pas chargés ici. "
-        "Ils peuvent être fournis sur demande pour la recherche, l'analyse ou un projet spécifique."
+        "Le téléchargement direct est désactivé afin de préserver les ressources du "
+        "tableau de bord et de la base de données. Une demande peut être envoyée ici; "
+        "aucun export Supabase n'est généré automatiquement lors de l'envoi."
     )
 
-    request_url = get_data_request_url()
-    if request_url:
-        st.link_button(
-            "✉️ Demander l'accès aux données complètes",
-            request_url,
+    if not data_request_email_is_configured():
+        st.warning(
+            "Le formulaire est prêt, mais l'envoi de courriel n'est pas encore configuré. "
+            "Ajoute les paramètres SMTP dans les secrets Streamlit."
+        )
+        return
+
+    with st.form("data_access_request_form", clear_on_submit=False):
+        left, right = st.columns(2)
+        with left:
+            requester_name = st.text_input(
+                "Nom *",
+                max_chars=120,
+                placeholder="Votre nom",
+            )
+            requester_email = st.text_input(
+                "Courriel *",
+                max_chars=254,
+                placeholder="nom@exemple.com",
+            )
+            organization = st.text_input(
+                "Organisation",
+                max_chars=160,
+                placeholder="Université, entreprise, média… (facultatif)",
+            )
+
+        with right:
+            requested_dataset = st.selectbox(
+                "Données souhaitées *",
+                DATA_REQUEST_DATASETS,
+            )
+            use_case = st.selectbox(
+                "Utilisation prévue *",
+                DATA_REQUEST_USE_CASES,
+            )
+
+        details = st.text_area(
+            "Décrivez brièvement votre besoin *",
+            max_chars=2000,
+            placeholder=(
+                "Ex. période recherchée, variables nécessaires, objectif de l'analyse, "
+                "format souhaité…"
+            ),
+            height=140,
+        )
+        consent = st.checkbox(
+            "J'accepte d'être contacté par courriel au sujet de cette demande."
+        )
+        submitted = st.form_submit_button(
+            "✉️ Envoyer la demande",
             width="stretch",
         )
-    else:
-        st.caption(
-            "Pour afficher un bouton de contact, configure `DATA_CONTACT_EMAIL` "
-            "ou `DATA_REQUEST_URL` dans les secrets Streamlit."
+
+    if not submitted:
+        return
+
+    errors = []
+    if not requester_name.strip():
+        errors.append("Indiquez votre nom.")
+    if not is_valid_email(requester_email):
+        errors.append("Indiquez une adresse courriel valide.")
+    if not details.strip():
+        errors.append("Décrivez brièvement votre besoin.")
+    if not consent:
+        errors.append("Vous devez accepter d'être contacté au sujet de la demande.")
+
+    if errors:
+        for error in errors:
+            st.error(error)
+        return
+
+    # Petit garde-fou contre les doubles clics / renvois accidentels dans la même session.
+    now_ts = datetime.now().timestamp()
+    last_sent = float(st.session_state.get("data_request_last_sent_at", 0) or 0)
+    if now_ts - last_sent < 60:
+        st.warning("Une demande vient déjà d'être envoyée. Réessayez dans une minute.")
+        return
+
+    try:
+        with st.spinner("Envoi de la demande…"):
+            send_data_request_email(
+                requester_name=requester_name,
+                requester_email=requester_email,
+                organization=organization,
+                requested_dataset=requested_dataset,
+                use_case=use_case,
+                details=details,
+            )
+    except Exception as exc:
+        print(f"Data request email error: {type(exc).__name__}: {exc}")
+        st.error(
+            "La demande n'a pas pu être envoyée pour le moment. "
+            "Réessayez plus tard ou contactez le responsable du projet."
         )
+        return
+
+    st.session_state["data_request_last_sent_at"] = now_ts
+    st.success(
+        "Demande envoyée. Vous recevrez une réponse à l'adresse indiquée "
+        "si l'accès aux données peut être accordé."
+    )
 
 
 def enrich_raw_history(raw_df: pd.DataFrame, latest_df: pd.DataFrame) -> pd.DataFrame:
@@ -1016,7 +1217,7 @@ def show_table(
     if len(display_df) > max_display_rows:
         st.caption(
             f"Affichage des {max_display_rows:,} premières lignes sur {len(display_df):,}. "
-            "Utilise le bouton de téléchargement pour obtenir le fichier complet."
+            "L'accès au jeu complet peut être demandé avec le formulaire prévu à cet effet."
         )
         display_df = display_df.head(max_display_rows)
 
@@ -1125,17 +1326,13 @@ def get_cause_column(df: pd.DataFrame) -> str | None:
 
 
 def make_download(df: pd.DataFrame, label: str, filename: str):
-    """Créer un bouton de téléchargement CSV lorsque des données sont disponibles."""
+    """Ne pas exposer de téléchargement direct; l'accès passe par le formulaire."""
     if df is None or df.empty:
         return
 
-    csv = prepare_display_table(df).to_csv(index=False).encode("utf-8-sig")
-    st.download_button(
-        label=label,
-        data=csv,
-        file_name=filename,
-        mime="text/csv",
-        width="stretch",
+    st.caption(
+        "Téléchargement direct désactivé — utilisez le formulaire de demande "
+        "d'accès aux données ci-dessous."
     )
 
 
@@ -2433,14 +2630,14 @@ elif page == "Qualité des données":
 
 elif page == "Données":
     render_page_header(
-        "Export public",
+        "Accès contrôlé",
         "Données",
-        "Le tableau de bord public fournit uniquement les petits jeux de données "
-        "nécessaires à la consultation courante. L'historique complet est disponible sur demande.",
+        "Les jeux de données peuvent être consultés dans le tableau de bord, mais leur "
+        "téléchargement direct est désactivé. Toute demande d'accès passe par le formulaire.",
     )
 
     table_name = st.selectbox(
-        "Jeu de données public",
+        "Aperçu du jeu de données",
         [
             "Pannes actives filtrées",
             "Toutes les pannes actives",
