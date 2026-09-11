@@ -1957,6 +1957,7 @@ elif page == "Analyse territoriale":
     render_page_header(
         "Territoires",
         "Analyse territoriale",
+        "Comparaison des pannes actives par région, MRC et municipalité.",
     )
 
     analysis_level = st.radio(
@@ -2043,6 +2044,7 @@ elif page == "Causes":
     render_page_header(
         "Origine",
         "Causes des pannes",
+        "Cause des pannes inconnu souvent en raison des causes qui sont affiche juste avant la reparation ce qui fait qu<on ne les captures pas",
     )
 
     cause_col = get_cause_column(filtered)
