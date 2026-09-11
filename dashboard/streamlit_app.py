@@ -1010,7 +1010,7 @@ def show_table(
     if len(display_df) > max_display_rows:
         st.caption(
             f"Affichage des {max_display_rows:,} premières lignes sur {len(display_df):,}. "
-            "L'accès au jeu complet peut être demandé avec le formulaire prévu à cet effet."
+            "L'accès au jeu complet peut être demandé avec le formulaire"
         )
         display_df = display_df.head(max_display_rows)
 
@@ -1854,8 +1854,8 @@ elif page == "Explorer la carte":
     render_page_header(
         "Exploration",
         "Carte des pannes",
-        "Carte légère de la situation actuelle. Les captures historiques complètes "
-        "sont disponibles sur demande afin de préserver les performances du service public.",
+        "Carte légère de la situation actuelle. Les captures historiques "
+        "sont disponibles sur demande afin de préserver les ressources",
     )
 
     map_data = filtered.copy()
@@ -1957,8 +1957,6 @@ elif page == "Analyse territoriale":
     render_page_header(
         "Territoires",
         "Analyse territoriale",
-        "Des classements simples pour comparer les régions, les MRC et les "
-        "municipalités sans surcharge visuelle.",
     )
 
     analysis_level = st.radio(
@@ -2045,8 +2043,6 @@ elif page == "Causes":
     render_page_header(
         "Origine",
         "Causes des pannes",
-        "Lecture des causes disponibles dans la vue filtrée, avec une "
-        "distinction claire entre cause connue et information absente."
     )
 
     cause_col = get_cause_column(filtered)
