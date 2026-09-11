@@ -878,7 +878,7 @@ def render_full_data_access() -> None:
     render_section_header("Accès aux données", "Sur demande seulement")
     st.info(
         "Le téléchargement direct est désactivé afin de préserver les ressources "
-        "du tableau de bord et de la base de données. Pour obtenir un jeu de données, "
+        "du tableau de bord et de la base de données. Pour obtenir le jeu de données, "
         "remplissez le formulaire de demande."
     )
 
@@ -894,8 +894,7 @@ def render_full_data_access() -> None:
         width="stretch",
     )
     st.caption(
-        "Le formulaire s'ouvre dans Google Forms. Son ouverture ne déclenche "
-        "aucun export ni requête historique lourde sur Supabase."
+        "Le formulaire s'ouvre dans Google Forms. "
     )
 
 def enrich_raw_history(raw_df: pd.DataFrame, latest_df: pd.DataFrame) -> pd.DataFrame:
