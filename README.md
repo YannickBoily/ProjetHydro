@@ -1,13 +1,14 @@
-ProjetHydro
+# ProjetHydro
 
 Pipeline automatisé de collecte, d'historisation et d'analyse des pannes électriques au Québec, accompagné d'un dashboard Streamlit interactif.
 
-Le projet collecte les données publiques d'Hydro-Québec chaque heure avec GitHub Actions, conserve l'historique de production dans Supabase/PostgreSQL, maintient des tables analytiques optimisées et expose les résultats dans un dashboard permettant d'explorer les pannes actives et historiques.
+Le projet collecte les données publiques d'Hydro-Québec **chaque heure** avec GitHub Actions, conserve l'historique de production dans **Supabase/PostgreSQL**, maintient des tables analytiques optimisées et expose les résultats dans un dashboard permettant d'explorer les pannes actives et historiques.
 
-L'historique du projet débute le 31 mars 2026.
+> L'historique du projet débute le **31 mars 2026**.
 
-Architecture
+## Architecture
 
+```mermaid
 flowchart LR
     A[Données Hydro-Québec] --> B[Collecte Python<br/>chaque heure]
     B --> C[Snapshot normalisé]
@@ -17,89 +18,59 @@ flowchart LR
     F --> G[Dashboard Streamlit]
     H[Référentiel géospatial<br/>municipalités / MRC / régions] --> D
     I[Maintenance périodique] --> E
+```
 
-Pipeline de production
+### Pipeline de production
 
-scripts/fetch_outages.py récupère le snapshot courant, normalise les champs et classe les causes de panne.
+1. `scripts/fetch_outages.py` récupère le snapshot courant, normalise les champs et classe les causes de panne.
+2. `.github/workflows/hydro.yml` exécute la collecte **toutes les heures**.
+3. `scripts/sync_to_supabase.py` synchronise le snapshot vers la table historique `raw_outage_snapshots` dans Supabase/PostgreSQL.
+4. `scripts/refresh_supabase_analytics.py` met à jour de façon incrémentale les tables utilisées par l'application.
+5. `dashboard/streamlit_app.py` interroge directement les tables PostgreSQL lorsque la connexion Supabase est configurée.
+6. `.github/workflows/hydro_maintenance.yml` effectue une maintenance hebdomadaire et force la réconciliation des analyses plus coûteuses.
 
-.github/workflows/hydro.yml exécute la collecte toutes les heures.
+## Tables principales
 
-scripts/sync_to_supabase.py synchronise le snapshot vers la table historique raw_outage_snapshots dans Supabase/PostgreSQL.
+| Table | Rôle |
+| --- | --- |
+| `raw_outage_snapshots` | Historique brut des observations de pannes |
+| `dim_municipalities` | Référentiel municipal enrichi avec MRC et région |
+| `app_latest_outages` | Dernière observation connue de chaque panne |
+| `app_active_outages` | Pannes considérées actives au dernier snapshot |
+| `app_daily_summary` | Agrégations quotidiennes utilisées pour les tendances |
+| `app_data_quality_report` | Contrôles et indicateurs de qualité des données |
 
-scripts/refresh_supabase_analytics.py met à jour de façon incrémentale les tables utilisées par l'application.
+Les tables `app_latest_outages` et `app_active_outages` sont maintenues de façon incrémentale afin d'éviter de retraiter l'ensemble de l'historique à chaque collecte. Les analyses plus lourdes, notamment les agrégations quotidiennes et le rapport de qualité, sont rafraîchies périodiquement et peuvent être reconstruites lors de la maintenance.
 
-dashboard/streamlit_app.py interroge directement les tables PostgreSQL lorsque la connexion Supabase est configurée.
+## Enrichissement géospatial
 
-.github/workflows/hydro_maintenance.yml effectue une maintenance hebdomadaire et force la réconciliation des analyses plus coûteuses.
+Les observations Hydro-Québec fournissent un identifiant municipal et des coordonnées. Le script `scripts/build_municipality_reference_geo.py` permet de construire un référentiel en associant ces points à des polygones municipaux, puis d'ajouter notamment :
 
-Tables principales
+- le nom de la municipalité ;
+- la MRC ;
+- la région administrative ;
+- des indicateurs de couverture et de qualité du géocodage.
 
-Table
+Ce référentiel est ensuite synchronisé vers `dim_municipalities` et utilisé par les analyses et les cartes du dashboard.
 
-Rôle
-
-raw_outage_snapshots
-
-Historique brut des observations de pannes
-
-dim_municipalities
-
-Référentiel municipal enrichi avec MRC et région
-
-app_latest_outages
-
-Dernière observation connue de chaque panne
-
-app_active_outages
-
-Pannes considérées actives au dernier snapshot
-
-app_daily_summary
-
-Agrégations quotidiennes utilisées pour les tendances
-
-app_data_quality_report
-
-Contrôles et indicateurs de qualité des données
-
-Les tables app_latest_outages et app_active_outages sont maintenues de façon incrémentale afin d'éviter de retraiter l'ensemble de l'historique à chaque collecte. Les analyses plus lourdes, notamment les agrégations quotidiennes et le rapport de qualité, sont rafraîchies périodiquement et peuvent être reconstruites lors de la maintenance.
-
-Enrichissement géospatial
-
-Les observations Hydro-Québec fournissent un identifiant municipal et des coordonnées. Le script scripts/build_municipality_reference_geo.py permet de construire un référentiel en associant ces points à des polygones municipaux, puis d'ajouter notamment :
-
-le nom de la municipalité ;
-
-la MRC ;
-
-la région administrative ;
-
-des indicateurs de couverture et de qualité du géocodage.
-
-Ce référentiel est ensuite synchronisé vers dim_municipalities et utilisé par les analyses et les cartes du dashboard.
-
-Dashboard
+## Dashboard
 
 Le dashboard Streamlit permet notamment de consulter :
 
-les pannes actives et le nombre de clients touchés ;
-
-les pannes récentes et l'historique disponible ;
-
-les cartes par municipalité, MRC et région ;
-
-l'évolution temporelle des pannes et des clients affectés ;
-
-la distribution des causes ;
-
-les indicateurs de qualité des données.
+- les pannes actives et le nombre de clients touchés ;
+- les pannes récentes et l'historique disponible ;
+- les cartes par municipalité, MRC et région ;
+- l'évolution temporelle des pannes et des clients affectés ;
+- la distribution des causes ;
+- les indicateurs de qualité des données.
 
 En production, le dashboard lit les données dans Supabase/PostgreSQL. Pour le développement local, il peut également utiliser les exports CSV générés à partir du warehouse DuckDB.
 
-Workflow local avec DuckDB
+## Workflow local avec DuckDB
 
 DuckDB reste disponible comme environnement analytique local et reproductible.
 
+```bash
 # Installer les dépendances
 python -m pip install -r requirements.txt
 
@@ -114,23 +85,29 @@ python scripts/export_tables.py
 
 # Lancer le dashboard
 streamlit run dashboard/streamlit_app.py
+```
 
 Sous Windows PowerShell, la variable d'environnement peut être définie avant la collecte avec :
 
+```powershell
 $env:HYDRO_WRITE_LOCAL_HISTORY="1"
 python scripts/fetch_outages.py
+```
 
-Configuration Supabase
+## Configuration Supabase
 
 La connexion de production utilise principalement les variables suivantes :
 
+```text
 SUPABASE_DB_URL
 SUPABASE_DB_HOSTADDR   # optionnelle selon l'environnement réseau
+```
 
 Le dashboard peut aussi recevoir ces valeurs via les secrets Streamlit. Les identifiants de connexion ne doivent jamais être ajoutés au dépôt Git.
 
-Structure du projet
+## Structure du projet
 
+```text
 ProjetHydro/
 ├── .github/workflows/              # Automatisation horaire et maintenance
 ├── dashboard/
@@ -146,37 +123,31 @@ ProjetHydro/
 ├── supabase/                       # Schéma et optimisation PostgreSQL
 ├── tests/                          # Tests automatisés
 └── requirements.txt
+```
 
-Technologies
+## Technologies
 
-Python · pandas · PostgreSQL · Supabase · SQL · Streamlit · Plotly · GitHub Actions · DuckDB · données géospatiales · ETL · Data Quality
+**Python · pandas · PostgreSQL · Supabase · SQL · Streamlit · Plotly · GitHub Actions · DuckDB · données géospatiales · ETL · Data Quality**
 
-Qualité et exploitation
+## Qualité et exploitation
 
 Le pipeline comprend plusieurs mécanismes destinés à rendre les traitements plus robustes :
 
-déduplication des observations par panne et timestamp de capture ;
+- déduplication des observations par panne et timestamp de capture ;
+- synchronisation avec une petite fenêtre de reprise pour récupérer d'éventuelles arrivées tardives ;
+- rafraîchissement incrémental des tables les plus consultées ;
+- index PostgreSQL pour les accès fréquents ;
+- rapport de qualité des données ;
+- maintenance périodique pour réconcilier les tables analytiques.
 
-synchronisation avec une petite fenêtre de reprise pour récupérer d'éventuelles arrivées tardives ;
-
-rafraîchissement incrémental des tables les plus consultées ;
-
-index PostgreSQL pour les accès fréquents ;
-
-rapport de qualité des données ;
-
-maintenance périodique pour réconcilier les tables analytiques.
-
-Licence et source des données
+## Licence et source des données
 
 Les données utilisées dans ce projet proviennent des données publiques d'Hydro-Québec.
 
-Elles sont distribuées sous licence Creative Commons Attribution – NonCommercial 4.0 International (CC BY-NC 4.0). Elles doivent notamment être attribuées à leur source et ne doivent pas être utilisées à des fins commerciales.
+Elles sont distribuées sous licence **Creative Commons Attribution – NonCommercial 4.0 International (CC BY-NC 4.0)**. Elles doivent notamment être attribuées à leur source et ne doivent pas être utilisées à des fins commerciales.
 
-Source : Hydro-Québec – Données ouvertes : https://donnees.hydroquebec.com/explore/dataset/pannes-interruptions/information/?flg=fr-fr
-
-Licence : CC BY-NC 4.0
-
-Texte de la licence : https://creativecommons.org/licenses/by-nc/4.0/
+- Source : Hydro-Québec – Données ouvertes : https://donnees.hydroquebec.com/explore/dataset/pannes-interruptions/information/?flg=fr-fr
+- Licence : CC BY-NC 4.0
+- Texte de la licence : https://creativecommons.org/licenses/by-nc/4.0/
 
 Les traitements réalisés dans ce dépôt peuvent inclure la collecte, le nettoyage, la transformation, l'agrégation et l'analyse des données. Toute erreur d'interprétation ou d'analyse relève de l'auteur de ce projet et non d'Hydro-Québec.
