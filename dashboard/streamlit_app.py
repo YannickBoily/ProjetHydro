@@ -1670,7 +1670,7 @@ page = st.sidebar.radio(
 st.sidebar.divider()
 st.sidebar.caption(f"Source : {DATA_SOURCE}")
 
-if st.sidebar.button("🔄 Actualiser la situation actuelle", width="stretch"):
+if st.sidebar.button("🔄 Recharger depuis Supabase", width="stretch"):
     if using_supabase():
         load_supabase_active.clear()
         load_supabase_recent_outages.clear()
