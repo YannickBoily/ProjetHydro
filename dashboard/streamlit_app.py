@@ -14,6 +14,7 @@ from __future__ import annotations
 import html
 import os
 import copy
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,12 @@ from typing import Any
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+
+_REPO_ROOT_FOR_IMPORTS = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT_FOR_IMPORTS) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT_FOR_IMPORTS))
+
+from scripts.time_utils import normalize_capture_series, normalize_hydro_local_series
 
 
 # =============================================================================
@@ -551,14 +558,19 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     normalized = df.copy()
 
-    # Les heures sont stockés en UTC par la source, puis présentés dans
-    # le fuseau du Québec. Le fuseau reste attaché pour prévenir tout décalage.
+    # Hydro start/restore values in legacy CSV files are Quebec wall-clock
+    # timestamps, while capture-derived values are UTC wall-clock timestamps.
+    # Supabase TIMESTAMPTZ values and newer CSV rows already carry an offset;
+    # the helpers preserve those offsets and normalize everything to UTC first.
+    hydro_local_columns = {"start_time", "estimated_restore"}
     for column in TIMESTAMP_COLUMNS:
-        if column in normalized.columns:
-            normalized[column] = (
-                pd.to_datetime(normalized[column], errors="coerce", utc=True)
-                .dt.tz_convert(QUEBEC_TIMEZONE)
-            )
+        if column not in normalized.columns:
+            continue
+        if column in hydro_local_columns:
+            parsed = normalize_hydro_local_series(normalized[column])
+        else:
+            parsed = normalize_capture_series(normalized[column])
+        normalized[column] = parsed.dt.tz_convert(QUEBEC_TIMEZONE)
 
     if "date" in normalized.columns:
         normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
