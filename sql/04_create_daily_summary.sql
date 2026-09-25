@@ -2,7 +2,7 @@ CREATE OR REPLACE TABLE daily_summary AS
 WITH capture_summary AS (
     SELECT
         captured_at,
-        CAST(captured_at AS DATE) AS capture_date,
+        CAST(timezone('America/Toronto', captured_at) AS DATE) AS capture_date,
         COUNT(DISTINCT outage_id) AS active_outages_estimate,
         SUM(customers_affected) AS customers_affected_snapshot,
         COUNT(DISTINCT municipality_id) AS municipalities_affected_snapshot,
@@ -43,15 +43,15 @@ first_seen AS (
 
 new_outages AS (
     SELECT
-        CAST(first_seen_at AS DATE) AS capture_date,
+        CAST(timezone('America/Toronto', first_seen_at) AS DATE) AS capture_date,
         COUNT(*) AS new_outages_detected
     FROM first_seen
-    GROUP BY CAST(first_seen_at AS DATE)
+    GROUP BY CAST(timezone('America/Toronto', first_seen_at) AS DATE)
 ),
 
 observed AS (
     SELECT
-        CAST(captured_at AS DATE) AS capture_date,
+        CAST(timezone('America/Toronto', captured_at) AS DATE) AS capture_date,
         COUNT(*) AS raw_rows_count,
         COUNT(DISTINCT outage_id) AS unique_outages_observed,
         SUM(
@@ -63,7 +63,7 @@ observed AS (
         COUNT(DISTINCT municipality_id) AS municipalities_observed
     FROM raw_outage_snapshots
     WHERE captured_at IS NOT NULL
-    GROUP BY CAST(captured_at AS DATE)
+    GROUP BY CAST(timezone('America/Toronto', captured_at) AS DATE)
 )
 
 SELECT
