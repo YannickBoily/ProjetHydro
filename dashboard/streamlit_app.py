@@ -1567,7 +1567,6 @@ def render_clean_map(
         tuple(fig.data[trace_count:])
         + tuple(fig.data[:trace_count])
         )
-    )
     fig.update_layout(
         template=PLOT_TEMPLATE,
         map_style=MAP_STYLE,
