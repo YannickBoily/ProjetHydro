@@ -31,6 +31,22 @@ def main() -> None:
             connection,
         )
 
+        latest_run = pd.read_sql_query(
+            """
+            SELECT
+                snapshot_id,
+                captured_at,
+                source_version,
+                status,
+                outage_count,
+                finished_at
+            FROM collection_runs
+            ORDER BY captured_at DESC
+            LIMIT 5;
+            """,
+            connection,
+        )
+
         causes = pd.read_sql_query(
             """
             SELECT
@@ -57,6 +73,9 @@ def main() -> None:
 
         print("\n=== Load summary ===")
         print(summary.to_string(index=False))
+
+        print("\n=== Latest collection runs ===")
+        print(latest_run.to_string(index=False))
 
         print("\n=== Causes ===")
         print(causes.to_string(index=False))

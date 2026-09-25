@@ -274,20 +274,19 @@ def prepare_affected_outage_ids(connection, bootstrap: bool) -> int:
         else:
             cursor.execute(
                 """
-                WITH latest_capture AS (
-                    SELECT captured_at AS max_captured_at
-                    FROM raw_outage_snapshots
-                    WHERE captured_at IS NOT NULL
+                WITH latest_successful_snapshot AS (
+                    SELECT snapshot_id
+                    FROM collection_runs
+                    WHERE status = 'success'
                     ORDER BY captured_at DESC
                     LIMIT 1
                 )
                 INSERT INTO _affected_outage_ids (outage_id)
                 SELECT DISTINCT r.outage_id
                 FROM raw_outage_snapshots r
-                CROSS JOIN latest_capture l
-                WHERE r.outage_id IS NOT NULL
-                  AND r.captured_at BETWEEN l.max_captured_at - INTERVAL '5 minutes'
-                                        AND l.max_captured_at;
+                INNER JOIN latest_successful_snapshot s
+                    ON r.snapshot_id = s.snapshot_id
+                WHERE r.outage_id IS NOT NULL;
                 """
             )
 
@@ -468,10 +467,10 @@ def refresh_active_outages(connection) -> None:
 
         TRUNCATE TABLE app_active_outages;
 
-        WITH latest_capture AS (
-            SELECT captured_at AS max_captured_at
-            FROM raw_outage_snapshots
-            WHERE captured_at IS NOT NULL
+        WITH latest_successful_snapshot AS (
+            SELECT snapshot_id, captured_at
+            FROM collection_runs
+            WHERE status = 'success'
             ORDER BY captured_at DESC
             LIMIT 1
         ),
@@ -479,13 +478,12 @@ def refresh_active_outages(connection) -> None:
         active_ids AS (
             SELECT DISTINCT ON (r.outage_id)
                 r.outage_id,
-                r.captured_at AS active_capture_at
+                s.captured_at AS active_capture_at
             FROM raw_outage_snapshots r
-            CROSS JOIN latest_capture l
+            INNER JOIN latest_successful_snapshot s
+                ON r.snapshot_id = s.snapshot_id
             WHERE r.outage_id IS NOT NULL
-              AND r.captured_at BETWEEN l.max_captured_at - INTERVAL '5 minutes'
-                                    AND l.max_captured_at
-            ORDER BY r.outage_id, r.captured_at DESC
+            ORDER BY r.outage_id
         )
 
         INSERT INTO app_active_outages (
@@ -611,6 +609,13 @@ def main() -> None:
             WHERE cause_label IS NOT NULL
               AND TRIM(cause_label) <> ''
               AND LOWER(TRIM(cause_label)) <> 'unknown';
+
+            CREATE INDEX IF NOT EXISTS idx_raw_outage_snapshots_snapshot_id
+            ON raw_outage_snapshots (snapshot_id);
+
+            CREATE INDEX IF NOT EXISTS idx_collection_runs_success_capture
+            ON collection_runs (captured_at DESC)
+            WHERE status = 'success';
             """,
         )
 
