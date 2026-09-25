@@ -550,6 +550,22 @@ def get_supabase_engine():
         )
         raise exc
 
+    # Forcer SQLAlchemy à utiliser psycopg2-binary
+    database_url = str(database_url).strip()
+
+    if database_url.startswith("postgresql://"):
+        database_url = database_url.replace(
+            "postgresql://",
+            "postgresql+psycopg2://",
+            1,
+        )
+    elif database_url.startswith("postgres://"):
+        database_url = database_url.replace(
+            "postgres://",
+            "postgresql+psycopg2://",
+            1,
+        )
+
     connect_args = {
         "sslmode": "require",
         "connect_timeout": 10,
