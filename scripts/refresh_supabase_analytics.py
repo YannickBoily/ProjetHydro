@@ -167,8 +167,8 @@ def ensure_incremental_tables(connection) -> None:
         CREATE TABLE IF NOT EXISTS app_latest_outages (
             outage_id TEXT NOT NULL,
             customers_affected INTEGER,
-            start_time TIMESTAMP,
-            estimated_restore TIMESTAMP,
+            start_time TIMESTAMPTZ,
+            estimated_restore TIMESTAMPTZ,
             status_code TEXT,
             status TEXT,
             latest_raw_cause_code DOUBLE PRECISION,
@@ -176,7 +176,7 @@ def ensure_incremental_tables(connection) -> None:
             analysis_cause_code DOUBLE PRECISION,
             analysis_cause_label TEXT,
             has_known_cause BOOLEAN,
-            known_cause_last_seen_at TIMESTAMP,
+            known_cause_last_seen_at TIMESTAMPTZ,
             municipality_id INTEGER,
             municipality_label TEXT,
             municipality_name TEXT,
@@ -184,9 +184,9 @@ def ensure_incremental_tables(connection) -> None:
             mrc_name TEXT,
             region_name TEXT,
             is_geocoded BOOLEAN,
-            latest_row_captured_at TIMESTAMP,
-            first_capture_at TIMESTAMP,
-            last_capture_at TIMESTAMP,
+            latest_row_captured_at TIMESTAMPTZ,
+            first_capture_at TIMESTAMPTZ,
+            last_capture_at TIMESTAMPTZ,
             capture_count BIGINT,
             observed_duration_hours DOUBLE PRECISION,
             outage_age_hours_at_latest_capture DOUBLE PRECISION,
@@ -213,7 +213,7 @@ def ensure_incremental_tables(connection) -> None:
         );
 
         ALTER TABLE app_active_outages
-        ADD COLUMN IF NOT EXISTS active_capture_at TIMESTAMP;
+        ADD COLUMN IF NOT EXISTS active_capture_at TIMESTAMPTZ;
 
         ALTER TABLE app_active_outages
         ADD COLUMN IF NOT EXISTS outage_age_hours_at_capture DOUBLE PRECISION;
@@ -229,6 +229,205 @@ def ensure_incremental_tables(connection) -> None:
 
         """,
     )
+
+
+def migrate_incremental_timestamp_columns(connection) -> bool:
+    """Convert legacy analytical timestamps to TIMESTAMPTZ once.
+
+    Returns True when a migration was required so the caller can rebuild all
+    latest-outage metrics whose durations depend on the corrected timezone.
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name IN ('app_latest_outages', 'app_active_outages')
+                  AND data_type = 'timestamp without time zone'
+                  AND column_name IN (
+                      'start_time',
+                      'estimated_restore',
+                      'known_cause_last_seen_at',
+                      'latest_row_captured_at',
+                      'first_capture_at',
+                      'last_capture_at',
+                      'active_capture_at'
+                  )
+            );
+            """
+        )
+        needs_migration = bool(cursor.fetchone()[0])
+
+    if not needs_migration:
+        return False
+
+    execute_step(
+        connection,
+        "migrate analytical timestamps to timestamptz",
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'app_latest_outages'
+                  AND column_name = 'start_time'
+                  AND data_type = 'timestamp without time zone'
+            ) THEN
+                ALTER TABLE app_latest_outages
+                ALTER COLUMN start_time TYPE TIMESTAMPTZ
+                USING start_time AT TIME ZONE 'America/Toronto';
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'app_latest_outages'
+                  AND column_name = 'estimated_restore'
+                  AND data_type = 'timestamp without time zone'
+            ) THEN
+                ALTER TABLE app_latest_outages
+                ALTER COLUMN estimated_restore TYPE TIMESTAMPTZ
+                USING estimated_restore AT TIME ZONE 'America/Toronto';
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'app_latest_outages'
+                  AND column_name = 'known_cause_last_seen_at'
+                  AND data_type = 'timestamp without time zone'
+            ) THEN
+                ALTER TABLE app_latest_outages
+                ALTER COLUMN known_cause_last_seen_at TYPE TIMESTAMPTZ
+                USING known_cause_last_seen_at AT TIME ZONE 'UTC';
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'app_latest_outages'
+                  AND column_name = 'latest_row_captured_at'
+                  AND data_type = 'timestamp without time zone'
+            ) THEN
+                ALTER TABLE app_latest_outages
+                ALTER COLUMN latest_row_captured_at TYPE TIMESTAMPTZ
+                USING latest_row_captured_at AT TIME ZONE 'UTC';
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'app_latest_outages'
+                  AND column_name = 'first_capture_at'
+                  AND data_type = 'timestamp without time zone'
+            ) THEN
+                ALTER TABLE app_latest_outages
+                ALTER COLUMN first_capture_at TYPE TIMESTAMPTZ
+                USING first_capture_at AT TIME ZONE 'UTC';
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'app_latest_outages'
+                  AND column_name = 'last_capture_at'
+                  AND data_type = 'timestamp without time zone'
+            ) THEN
+                ALTER TABLE app_latest_outages
+                ALTER COLUMN last_capture_at TYPE TIMESTAMPTZ
+                USING last_capture_at AT TIME ZONE 'UTC';
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'app_active_outages'
+                  AND column_name = 'start_time'
+                  AND data_type = 'timestamp without time zone'
+            ) THEN
+                ALTER TABLE app_active_outages
+                ALTER COLUMN start_time TYPE TIMESTAMPTZ
+                USING start_time AT TIME ZONE 'America/Toronto';
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'app_active_outages'
+                  AND column_name = 'estimated_restore'
+                  AND data_type = 'timestamp without time zone'
+            ) THEN
+                ALTER TABLE app_active_outages
+                ALTER COLUMN estimated_restore TYPE TIMESTAMPTZ
+                USING estimated_restore AT TIME ZONE 'America/Toronto';
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'app_active_outages'
+                  AND column_name = 'known_cause_last_seen_at'
+                  AND data_type = 'timestamp without time zone'
+            ) THEN
+                ALTER TABLE app_active_outages
+                ALTER COLUMN known_cause_last_seen_at TYPE TIMESTAMPTZ
+                USING known_cause_last_seen_at AT TIME ZONE 'UTC';
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'app_active_outages'
+                  AND column_name = 'latest_row_captured_at'
+                  AND data_type = 'timestamp without time zone'
+            ) THEN
+                ALTER TABLE app_active_outages
+                ALTER COLUMN latest_row_captured_at TYPE TIMESTAMPTZ
+                USING latest_row_captured_at AT TIME ZONE 'UTC';
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'app_active_outages'
+                  AND column_name = 'first_capture_at'
+                  AND data_type = 'timestamp without time zone'
+            ) THEN
+                ALTER TABLE app_active_outages
+                ALTER COLUMN first_capture_at TYPE TIMESTAMPTZ
+                USING first_capture_at AT TIME ZONE 'UTC';
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'app_active_outages'
+                  AND column_name = 'last_capture_at'
+                  AND data_type = 'timestamp without time zone'
+            ) THEN
+                ALTER TABLE app_active_outages
+                ALTER COLUMN last_capture_at TYPE TIMESTAMPTZ
+                USING last_capture_at AT TIME ZONE 'UTC';
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'app_active_outages'
+                  AND column_name = 'active_capture_at'
+                  AND data_type = 'timestamp without time zone'
+            ) THEN
+                ALTER TABLE app_active_outages
+                ALTER COLUMN active_capture_at TYPE TIMESTAMPTZ
+                USING active_capture_at AT TIME ZONE 'UTC';
+            END IF;
+        END $$;
+        """,
+    )
+    return True
 
 
 def latest_table_needs_bootstrap(connection) -> bool:
@@ -621,8 +820,11 @@ def main() -> None:
 
         ensure_refresh_state_table(connection)
         ensure_incremental_tables(connection)
+        timezone_migrated = migrate_incremental_timestamp_columns(connection)
 
-        bootstrap = latest_table_needs_bootstrap(connection)
+        bootstrap = latest_table_needs_bootstrap(connection) or timezone_migrated
+        if timezone_migrated:
+            print("Timezone migration detected: rebuilding all latest outage metrics.")
         affected_count = refresh_latest_incrementally(
             connection,
             bootstrap=bootstrap,
@@ -643,7 +845,7 @@ def main() -> None:
                     SELECT
                         r.*,
                         DATE_TRUNC('minute', r.captured_at) AS capture_batch_minute,
-                        CAST(r.captured_at AS DATE) AS capture_date
+                        (r.captured_at AT TIME ZONE 'America/Toronto')::date AS capture_date
                     FROM raw_outage_snapshots r
                     WHERE r.captured_at IS NOT NULL
                 ),
@@ -686,10 +888,10 @@ def main() -> None:
 
                 new_outages AS (
                     SELECT
-                        CAST(first_seen_at AS DATE) AS capture_date,
+                        (first_seen_at AT TIME ZONE 'America/Toronto')::date AS capture_date,
                         COUNT(*) AS new_outages_detected
                     FROM first_seen
-                    GROUP BY CAST(first_seen_at AS DATE)
+                    GROUP BY (first_seen_at AT TIME ZONE 'America/Toronto')::date
                 ),
 
                 observed AS (

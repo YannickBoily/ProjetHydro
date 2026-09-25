@@ -9,6 +9,11 @@ import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
 
+try:
+    from scripts.time_utils import normalize_capture_series, normalize_hydro_local_series
+except ModuleNotFoundError:  # direct execution: python scripts/sync_to_supabase.py
+    from time_utils import normalize_capture_series, normalize_hydro_local_series
+
 
 # =============================================================================
 # Configuration
@@ -126,9 +131,15 @@ def normalize_raw_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize the common outage fields read from a CSV."""
     df = df.copy()
 
-    for column in ["start_time", "estimated_restore", "captured_at"]:
+    # Legacy CSV semantics are mixed by design: captures were written as UTC
+    # wall-clock values, while Hydro start/restore values were Quebec local
+    # wall-clock values. New snapshots include explicit offsets. Normalize both
+    # forms to aware UTC before inserting into TIMESTAMPTZ columns.
+    if "captured_at" in df.columns:
+        df["captured_at"] = normalize_capture_series(df["captured_at"])
+    for column in ["start_time", "estimated_restore"]:
         if column in df.columns:
-            df[column] = pd.to_datetime(df[column], errors="coerce", utc=True)
+            df[column] = normalize_hydro_local_series(df[column])
 
     for column in [
         "customers_affected",
@@ -301,7 +312,7 @@ def load_municipalities() -> pd.DataFrame:
 
     for column in ["first_seen_at", "last_seen_at"]:
         if column in df.columns:
-            df[column] = pd.to_datetime(df[column], errors="coerce", utc=True)
+            df[column] = normalize_capture_series(df[column])
 
     if "is_geocoded" in df.columns:
         df["is_geocoded"] = (
@@ -336,9 +347,11 @@ def ensure_collection_schema(connection) -> None:
     with connection.cursor() as cursor:
         cursor.execute(
             """
+            SET TIME ZONE 'UTC';
+
             CREATE TABLE IF NOT EXISTS collection_runs (
                 snapshot_id TEXT PRIMARY KEY,
-                captured_at TIMESTAMP NOT NULL,
+                captured_at TIMESTAMPTZ NOT NULL,
                 source_version TEXT,
                 status TEXT NOT NULL,
                 outage_count INTEGER NOT NULL CHECK (outage_count >= 0),
@@ -385,6 +398,85 @@ def ensure_collection_schema(connection) -> None:
 
             ALTER TABLE raw_outage_snapshots
             ALTER COLUMN snapshot_id SET NOT NULL;
+
+            -- P1 timezone migration. Historical capture timestamps are UTC
+            -- wall-clock values; Hydro start/restore timestamps are Quebec
+            -- wall-clock values. Convert only legacy timestamp-without-zone
+            -- columns so the migration remains idempotent.
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'collection_runs'
+                      AND column_name = 'captured_at'
+                      AND data_type = 'timestamp without time zone'
+                ) THEN
+                    ALTER TABLE collection_runs
+                    ALTER COLUMN captured_at TYPE TIMESTAMPTZ
+                    USING captured_at AT TIME ZONE 'UTC';
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'raw_outage_snapshots'
+                      AND column_name = 'captured_at'
+                      AND data_type = 'timestamp without time zone'
+                ) THEN
+                    ALTER TABLE raw_outage_snapshots
+                    ALTER COLUMN captured_at TYPE TIMESTAMPTZ
+                    USING captured_at AT TIME ZONE 'UTC';
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'raw_outage_snapshots'
+                      AND column_name = 'start_time'
+                      AND data_type = 'timestamp without time zone'
+                ) THEN
+                    ALTER TABLE raw_outage_snapshots
+                    ALTER COLUMN start_time TYPE TIMESTAMPTZ
+                    USING start_time AT TIME ZONE 'America/Toronto';
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'raw_outage_snapshots'
+                      AND column_name = 'estimated_restore'
+                      AND data_type = 'timestamp without time zone'
+                ) THEN
+                    ALTER TABLE raw_outage_snapshots
+                    ALTER COLUMN estimated_restore TYPE TIMESTAMPTZ
+                    USING estimated_restore AT TIME ZONE 'America/Toronto';
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'dim_municipalities'
+                      AND column_name = 'first_seen_at'
+                      AND data_type = 'timestamp without time zone'
+                ) THEN
+                    ALTER TABLE dim_municipalities
+                    ALTER COLUMN first_seen_at TYPE TIMESTAMPTZ
+                    USING first_seen_at AT TIME ZONE 'UTC';
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'dim_municipalities'
+                      AND column_name = 'last_seen_at'
+                      AND data_type = 'timestamp without time zone'
+                ) THEN
+                    ALTER TABLE dim_municipalities
+                    ALTER COLUMN last_seen_at TYPE TIMESTAMPTZ
+                    USING last_seen_at AT TIME ZONE 'UTC';
+                END IF;
+            END $$;
 
             CREATE INDEX IF NOT EXISTS idx_raw_outage_snapshots_snapshot_id
             ON raw_outage_snapshots (snapshot_id);

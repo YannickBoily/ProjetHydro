@@ -8,6 +8,13 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+try:
+    from scripts.time_utils import normalize_hydro_local_series
+except ModuleNotFoundError:  # direct execution: python scripts/fetch_outages.py
+    from time_utils import normalize_hydro_local_series
 
 
 VERSION_URL = "https://pannes.hydroquebec.com/pannes/donnees/v3_0/bisversion.json"
@@ -17,6 +24,12 @@ CURRENT_SNAPSHOT_FILE = Path("data/raw/current_snapshot.csv")
 CURRENT_SNAPSHOT_META_FILE = Path("data/raw/current_snapshot_meta.json")
 LOCAL_HISTORY_FILE = Path("data/raw/hydroquebec_history.csv")
 SNAPSHOT_METADATA_ATTR = "snapshot_metadata"
+
+HTTP_TIMEOUT = (5, 20)
+HTTP_RETRY_TOTAL = 4
+HTTP_RETRY_BACKOFF_SECONDS = 0.75
+HTTP_RETRY_STATUS_CODES = (429, 500, 502, 503, 504)
+HTTP_USER_AGENT = "ProjetHydro/1.0 (+https://github.com/)"
 
 
 EXPECTED_COLUMNS = [
@@ -41,6 +54,42 @@ def env_flag(name: str, default: bool = False) -> bool:
         return default
 
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def build_http_session() -> requests.Session:
+    """Create a resilient HTTP session for Hydro-Québec public endpoints."""
+    retry = Retry(
+        total=HTTP_RETRY_TOTAL,
+        connect=HTTP_RETRY_TOTAL,
+        read=HTTP_RETRY_TOTAL,
+        status=HTTP_RETRY_TOTAL,
+        backoff_factor=HTTP_RETRY_BACKOFF_SECONDS,
+        status_forcelist=HTTP_RETRY_STATUS_CODES,
+        allowed_methods=frozenset({"GET"}),
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": HTTP_USER_AGENT,
+            "Accept": "application/json,text/plain;q=0.9,*/*;q=0.1",
+        }
+    )
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+def validate_json_content_type(response: requests.Response) -> None:
+    """Reject an explicit non-JSON content type for the outage payload."""
+    content_type = str(response.headers.get("Content-Type", "")).lower()
+    if content_type and "json" not in content_type:
+        raise RuntimeError(
+            "Réponse Hydro-Québec invalide : Content-Type JSON attendu "
+            f"(reçu: {content_type})."
+        )
 
 
 def safe_get(arr, idx):
@@ -87,7 +136,7 @@ def _snapshot_metadata(
     """Build the metadata persisted beside the current snapshot CSV."""
     return {
         "snapshot_id": snapshot_id,
-        "captured_at": captured_at.strftime("%Y-%m-%d %H:%M:%S.%f"),
+        "captured_at": captured_at.isoformat(),
         "source_version": source_version,
         "status": "success",
         "outage_count": int(outage_count),
@@ -97,7 +146,7 @@ def _snapshot_metadata(
     }
 
 
-def fetch_current_outages() -> pd.DataFrame:
+def fetch_current_outages(session: requests.Session | None = None) -> pd.DataFrame:
     """Télécharge un snapshot Hydro-Québec et retourne un DataFrame normalisé.
 
     Un seul timestamp et un seul ``snapshot_id`` sont créés pour tout le batch.
@@ -106,22 +155,29 @@ def fetch_current_outages() -> pd.DataFrame:
     entièrement malformé est traité comme une erreur de source.
     """
     started_at = datetime.now(timezone.utc)
+    http = session or build_http_session()
 
-    response = requests.get(VERSION_URL, timeout=10)
+    response = http.get(VERSION_URL, timeout=HTTP_TIMEOUT)
     response.raise_for_status()
-    version = response.text.strip('"')
+    version = response.text.strip().strip('"').strip()
+    if not version:
+        raise RuntimeError("Réponse Hydro-Québec invalide : version BIS vide.")
 
     captured_at = datetime.now(timezone.utc)
-    captured_at_text = captured_at.strftime("%Y-%m-%d %H:%M:%S.%f")
+    captured_at_text = captured_at.isoformat()
     snapshot_id = uuid.uuid4().hex
 
     print(f"[{captured_at.strftime('%H:%M:%S')} UTC] Version BIS : {version}")
     print(f"Snapshot ID : {snapshot_id}")
 
     data_url = DATA_URL_TEMPLATE.format(version=version)
-    response = requests.get(data_url, timeout=10)
+    response = http.get(data_url, timeout=HTTP_TIMEOUT)
     response.raise_for_status()
-    data = response.json()
+    validate_json_content_type(response)
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise RuntimeError("Réponse Hydro-Québec invalide : JSON illisible.") from exc
 
     if not isinstance(data, dict):
         raise RuntimeError("Réponse Hydro-Québec invalide : objet JSON attendu.")
@@ -175,10 +231,11 @@ def fetch_current_outages() -> pd.DataFrame:
         df["lat"] = pd.to_numeric(coords[1], errors="coerce")
         df.drop(columns=["coordinates"], inplace=True)
 
-        df["start_time"] = pd.to_datetime(df["start_time"], errors="coerce")
-        df["estimated_restore"] = pd.to_datetime(
-            df["estimated_restore"], errors="coerce"
-        )
+        # Hydro publishes these values as Quebec wall-clock times when no
+        # offset is present. Persist them as aware UTC timestamps so new
+        # snapshots are unambiguous across DST boundaries.
+        df["start_time"] = normalize_hydro_local_series(df["start_time"])
+        df["estimated_restore"] = normalize_hydro_local_series(df["estimated_restore"])
         df["cause_label"] = df["cause_code"].apply(classify_cause)
 
         status_map = {
