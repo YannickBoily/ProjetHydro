@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import html
 import os
+import copy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -1279,8 +1280,8 @@ def apply_global_filters_to_history(snapshot: pd.DataFrame) -> pd.DataFrame:
 
 ACCENT_COLOR = "#38bdf8"
 MAP_STYLE = "carto-darkmatter"
-MAP_MARKER_MIN_SIZE = 10
-MAP_MARKER_MAX_SIZE = 38
+MAP_MARKER_MIN_SIZE = 4
+MAP_MARKER_MAX_SIZE = 18
 
 CAUSE_COLORS = {
     "Inconnue": "#64748b",
@@ -1481,9 +1482,7 @@ def render_clean_map(
             .fillna(0)
             .clip(lower=0)
         )
-        # Une racine carrée garde les petites pannes visibles sans écraser
-        # l’importance relative des événements majeurs.
-        geo["taille_carte"] = customers.pow(0.5) + 4
+        geo["taille_carte"] = customers.clip(lower=1).pow(0.35)
     else:
         geo["taille_carte"] = 4
 
@@ -1523,14 +1522,66 @@ def render_clean_map(
             "taille_carte": "Importance visuelle",
         },
     )
+    # Points principaux
     fig.update_traces(
-        marker=dict(sizemin=MAP_MARKER_MIN_SIZE, opacity=0.94),
+        marker=dict(
+            sizemin=MAP_MARKER_MIN_SIZE,
+        ),
+        opacity=0.90,
+    )
+
+    # -------------------------------------------------------------------------
+    # Halo lumineux autour des points
+    # -------------------------------------------------------------------------
+
+    main_traces = list(fig.data)
+
+    for trace in main_traces:
+        halo = copy.deepcopy(trace)
+
+        # Ne pas afficher le halo dans la légende
+        halo.showlegend = False
+
+        # Le halo ne doit pas avoir son propre tooltip
+        halo.hoverinfo = "skip"
+        halo.hovertemplate = None
+
+    # Halo très transparent
+        halo.opacity = 0.16
+
+    # Agrandir légèrement la couche située derrière le point
+        if halo.marker.size is not None:
+            halo.marker.size = [
+                float(size) * 1.6
+                for size in halo.marker.size
+            ]
+
+        halo.marker.sizemin = MAP_MARKER_MIN_SIZE + 3
+
+        fig.add_trace(halo)
+
+    # Placer les halos derrière les vrais points
+    trace_count = len(main_traces)
+
+    fig.data = (
+        tuple(fig.data[trace_count:])
+        + tuple(fig.data[:trace_count])
+        )
     )
     fig.update_layout(
         template=PLOT_TEMPLATE,
         map_style=MAP_STYLE,
         paper_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=0, r=0, t=5, b=0),
+        hoverlabel=dict(
+            bgcolor="#111827",
+            bordercolor="#334155",
+            font=dict(
+                color="#f8fafc",
+                size=13,
+                family="Inter, Segoe UI, Arial",
+                ),
+            ),
         legend=dict(
             title=None,
             orientation="h",
