@@ -11,7 +11,7 @@ Le projet collecte les données publiques d'Hydro-Québec **chaque heure** avec 
 ```mermaid
 flowchart LR
     A[Données Hydro-Québec] --> B[Collecte Python<br/>chaque heure]
-    B --> C[Snapshot normalisé]
+    B --> C[Snapshot normalisé + manifeste]
     C --> D[(Supabase / PostgreSQL)]
     D --> E[Refresh SQL incrémental]
     E --> F[Tables analytiques]
@@ -22,10 +22,10 @@ flowchart LR
 
 ### Pipeline de production
 
-1. `scripts/fetch_outages.py` récupère le snapshot courant, normalise les champs et classe les causes de panne.
+1. `scripts/fetch_outages.py` récupère le snapshot courant, normalise les champs, classe les causes et crée un `snapshot_id` unique. Le manifeste `current_snapshot_meta.json` permet de représenter explicitement un snapshot valide contenant **0 panne**.
 2. `.github/workflows/hydro.yml` exécute la collecte **toutes les heures**.
-3. `scripts/sync_to_supabase.py` synchronise le snapshot vers la table historique `raw_outage_snapshots` dans Supabase/PostgreSQL.
-4. `scripts/refresh_supabase_analytics.py` met à jour de façon incrémentale les tables utilisées par l'application.
+3. `scripts/sync_to_supabase.py` synchronise le snapshot vers `raw_outage_snapshots` et journalise son état dans `collection_runs`. La migration des anciennes observations vers des identifiants `legacy:*` est automatique et idempotente.
+4. `scripts/refresh_supabase_analytics.py` met à jour de façon incrémentale les tables utilisées par l'application. Les pannes actives correspondent exactement au **dernier snapshot réussi**, sans fenêtre temporelle approximative.
 5. `dashboard/streamlit_app.py` interroge directement les tables PostgreSQL lorsque la connexion Supabase est configurée.
 6. `.github/workflows/hydro_maintenance.yml` effectue une maintenance hebdomadaire et force la réconciliation des analyses plus coûteuses.
 
@@ -33,7 +33,8 @@ flowchart LR
 
 | Table | Rôle |
 | --- | --- |
-| `raw_outage_snapshots` | Historique brut des observations de pannes |
+| `collection_runs` | Journal des snapshots : identifiant, heure, version source, statut et nombre de pannes |
+| `raw_outage_snapshots` | Historique brut des observations de pannes, reliées à un `snapshot_id` |
 | `dim_municipalities` | Référentiel municipal enrichi avec MRC et région |
 | `app_latest_outages` | Dernière observation connue de chaque panne |
 | `app_active_outages` | Pannes considérées actives au dernier snapshot |
@@ -109,7 +110,7 @@ Le dashboard peut aussi recevoir ces valeurs via les secrets Streamlit. Les iden
 
 ```text
 ProjetHydro/
-├── .github/workflows/              # Automatisation horaire et maintenance
+├── .github/workflows/              # CI, automatisation horaire et maintenance
 ├── dashboard/
 │   └── streamlit_app.py            # Application Streamlit
 ├── scripts/
@@ -133,12 +134,15 @@ ProjetHydro/
 
 Le pipeline comprend plusieurs mécanismes destinés à rendre les traitements plus robustes :
 
+- snapshots atomiques identifiés par `snapshot_id`, y compris lorsqu'aucune panne n'est active ;
+- journal `collection_runs` avec statuts `pending`, `success` et `error` ;
 - déduplication des observations par panne et timestamp de capture ;
 - synchronisation avec une petite fenêtre de reprise pour récupérer d'éventuelles arrivées tardives ;
 - rafraîchissement incrémental des tables les plus consultées ;
 - index PostgreSQL pour les accès fréquents ;
 - rapport de qualité des données ;
-- maintenance périodique pour réconcilier les tables analytiques.
+- maintenance périodique pour réconcilier les tables analytiques ;
+- CI GitHub Actions exécutant la compilation Python et `pytest` sur les pushes et pull requests.
 
 ## Licence et source des données
 
