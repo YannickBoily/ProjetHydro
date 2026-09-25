@@ -342,9 +342,90 @@ def load_municipalities() -> pd.DataFrame:
 # Schema migration and collection-run tracking
 # =============================================================================
 
-def ensure_collection_schema(connection) -> None:
-    """Apply the P0 snapshot migration without discarding existing history."""
+TIMEZONE_MIGRATION_VIEWS = (
+    "vw_supabase_load_summary",
+    "vw_latest_outages",
+    "vw_active_outages",
+)
+TIMEZONE_MIGRATION_VIEW_DROP_ORDER = (
+    "vw_active_outages",
+    "vw_latest_outages",
+    "vw_supabase_load_summary",
+)
+TIMEZONE_MIGRATION_VIEW_CREATE_ORDER = (
+    "vw_supabase_load_summary",
+    "vw_latest_outages",
+    "vw_active_outages",
+)
+
+
+def timezone_migration_required(connection) -> bool:
+    """Return True when legacy timestamp-without-zone columns still exist."""
     with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND data_type = 'timestamp without time zone'
+                  AND (table_name, column_name) IN (
+                      ('collection_runs', 'captured_at'),
+                      ('raw_outage_snapshots', 'captured_at'),
+                      ('raw_outage_snapshots', 'start_time'),
+                      ('raw_outage_snapshots', 'estimated_restore'),
+                      ('dim_municipalities', 'first_seen_at'),
+                      ('dim_municipalities', 'last_seen_at')
+                  )
+            );
+            """
+        )
+        return bool(cursor.fetchone()[0])
+
+
+def capture_timezone_migration_views(connection) -> dict[str, str]:
+    """Capture existing core view definitions before altering timestamp types."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT c.relname, pg_get_viewdef(c.oid, true)
+            FROM pg_class c
+            INNER JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+              AND c.relkind = 'v'
+              AND c.relname = ANY(%s);
+            """,
+            (list(TIMEZONE_MIGRATION_VIEWS),),
+        )
+        return {name: definition for name, definition in cursor.fetchall()}
+
+
+def drop_timezone_migration_views(cursor, definitions: dict[str, str]) -> None:
+    """Drop dependent views in dependency-safe order inside the migration transaction."""
+    for view_name in TIMEZONE_MIGRATION_VIEW_DROP_ORDER:
+        if view_name in definitions:
+            cursor.execute(f'DROP VIEW IF EXISTS "{view_name}";')
+
+
+def restore_timezone_migration_views(cursor, definitions: dict[str, str]) -> None:
+    """Recreate the exact pre-migration view definitions in dependency-safe order."""
+    for view_name in TIMEZONE_MIGRATION_VIEW_CREATE_ORDER:
+        definition = definitions.get(view_name)
+        if definition:
+            cursor.execute(f'CREATE VIEW "{view_name}" AS {definition};')
+
+
+def ensure_collection_schema(connection) -> None:
+    """Apply snapshot/timezone migrations without discarding existing history."""
+    migrate_timezones = timezone_migration_required(connection)
+    view_definitions = (
+        capture_timezone_migration_views(connection) if migrate_timezones else {}
+    )
+
+    with connection.cursor() as cursor:
+        if migrate_timezones:
+            drop_timezone_migration_views(cursor, view_definitions)
+
         cursor.execute(
             """
             SET TIME ZONE 'UTC';
@@ -486,6 +567,10 @@ def ensure_collection_schema(connection) -> None:
             WHERE status = 'success';
             """
         )
+
+        if migrate_timezones:
+            restore_timezone_migration_views(cursor, view_definitions)
+
     connection.commit()
 
 
