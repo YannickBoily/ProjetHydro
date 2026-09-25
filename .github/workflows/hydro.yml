@@ -33,6 +33,18 @@ jobs:
           HYDRO_WRITE_LOCAL_HISTORY: "0"
         run: python scripts/fetch_outages.py
 
+      - name: Archive raw snapshot
+        run: python scripts/archive_snapshot.py
+
+      - name: Upload raw snapshot backup
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydro-raw-${{ github.run_id }}-${{ github.run_attempt }}
+          path: data/raw/archive/**
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Sync current snapshot to Supabase
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
