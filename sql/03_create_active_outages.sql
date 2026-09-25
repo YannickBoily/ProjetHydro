@@ -34,13 +34,6 @@ latest_capture AS (
     WHERE captured_at IS NOT NULL
 ),
 
-latest_capture_window AS (
-    SELECT
-        max_captured_at - INTERVAL '5 minutes' AS window_start,
-        max_captured_at AS window_end
-    FROM latest_capture
-),
-
 ranked_active AS (
     SELECT
         r.*,
@@ -49,8 +42,8 @@ ranked_active AS (
             ORDER BY r.captured_at DESC
         ) AS row_num
     FROM raw_outage_snapshots r
-    CROSS JOIN latest_capture_window w
-    WHERE r.captured_at BETWEEN w.window_start AND w.window_end
+    CROSS JOIN latest_capture l
+    WHERE r.captured_at = l.max_captured_at
       AND r.outage_id IS NOT NULL
 )
 
