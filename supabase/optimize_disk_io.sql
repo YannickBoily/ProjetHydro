@@ -19,6 +19,13 @@ WHERE cause_label IS NOT NULL
   AND TRIM(cause_label) <> ''
   AND LOWER(TRIM(cause_label)) <> 'unknown';
 
+CREATE INDEX IF NOT EXISTS idx_raw_outage_snapshots_snapshot_id
+ON raw_outage_snapshots (snapshot_id);
+
+CREATE INDEX IF NOT EXISTS idx_collection_runs_success_capture
+ON collection_runs (captured_at DESC)
+WHERE status = 'success';
+
 -- Redundant for the current application workload:
 -- - outage_id is already the first column of the UNIQUE constraint and the
 --   outage/capture index.
