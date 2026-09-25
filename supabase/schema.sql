@@ -67,7 +67,30 @@ ALTER COLUMN snapshot_id SET NOT NULL;
 
 -- Historical timezone migration. Capture timestamps were stored as UTC wall
 -- clock values, while Hydro start/restore timestamps were Quebec local wall
--- clock values. Convert only legacy timestamp-without-zone columns.
+-- clock values. PostgreSQL blocks ALTER COLUMN TYPE while dependent views exist,
+-- so remove only the known core views when a legacy timestamp column is present.
+-- They are recreated later in this file.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND data_type = 'timestamp without time zone'
+          AND (table_name, column_name) IN (
+              ('collection_runs', 'captured_at'),
+              ('raw_outage_snapshots', 'captured_at'),
+              ('raw_outage_snapshots', 'start_time'),
+              ('raw_outage_snapshots', 'estimated_restore')
+          )
+    ) THEN
+        DROP VIEW IF EXISTS vw_active_outages;
+        DROP VIEW IF EXISTS vw_latest_outages;
+        DROP VIEW IF EXISTS vw_supabase_load_summary;
+    END IF;
+END $$;
+
+-- Convert only legacy timestamp-without-zone columns; this block is idempotent.
 DO $$
 BEGIN
     IF EXISTS (
