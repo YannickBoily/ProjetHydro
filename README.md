@@ -12,11 +12,12 @@ Le projet collecte les données publiques d'Hydro-Québec **chaque heure** avec 
 flowchart LR
     A[Données Hydro-Québec] --> B[Collecte Python<br/>chaque heure]
     B --> C[Snapshot normalisé + manifeste]
+    C --> H[Archive brute GitHub Actions<br/>30 jours]
     C --> D[(Supabase / PostgreSQL)]
     D --> E[Refresh SQL incrémental]
     E --> F[Tables analytiques]
     F --> G[Dashboard Streamlit]
-    H[Référentiel géospatial<br/>municipalités / MRC / régions] --> D
+    J[Référentiel géospatial<br/>municipalités / MRC / régions] --> D
     I[Maintenance périodique] --> E
 ```
 
@@ -24,10 +25,11 @@ flowchart LR
 
 1. `scripts/fetch_outages.py` récupère le snapshot courant, normalise les champs, classe les causes et crée un `snapshot_id` unique. Le manifeste `current_snapshot_meta.json` permet de représenter explicitement un snapshot valide contenant **0 panne**.
 2. `.github/workflows/hydro.yml` exécute la collecte **toutes les heures**.
-3. `scripts/sync_to_supabase.py` synchronise le snapshot vers `raw_outage_snapshots` et journalise son état dans `collection_runs`. La migration des anciennes observations vers des identifiants `legacy:*` est automatique et idempotente.
-4. `scripts/refresh_supabase_analytics.py` met à jour de façon incrémentale les tables utilisées par l'application. Les pannes actives correspondent exactement au **dernier snapshot réussi**, sans fenêtre temporelle approximative.
-5. `dashboard/streamlit_app.py` interroge directement les tables PostgreSQL lorsque la connexion Supabase est configurée.
-6. `.github/workflows/hydro_maintenance.yml` effectue une maintenance hebdomadaire et force la réconciliation des analyses plus coûteuses.
+3. `scripts/archive_snapshot.py` compresse le snapshot, calcule ses checksums SHA-256 et `.github/workflows/hydro.yml` le conserve comme **artifact GitHub Actions pendant 30 jours avant toute tentative de synchro Supabase**.
+4. `scripts/sync_to_supabase.py` synchronise le snapshot vers `raw_outage_snapshots` et journalise son état dans `collection_runs`. La migration des anciennes observations vers des identifiants `legacy:*` est automatique et idempotente.
+5. `scripts/refresh_supabase_analytics.py` met à jour de façon incrémentale les tables utilisées par l'application. Les pannes actives correspondent exactement au **dernier snapshot réussi**, sans fenêtre temporelle approximative.
+6. `dashboard/streamlit_app.py` interroge directement les tables PostgreSQL lorsque la connexion Supabase est configurée.
+7. `.github/workflows/hydro_maintenance.yml` effectue une maintenance hebdomadaire et force la réconciliation des analyses plus coûteuses.
 
 ## Tables principales
 
@@ -42,6 +44,40 @@ flowchart LR
 | `app_data_quality_report` | Contrôles et indicateurs de qualité des données |
 
 Les tables `app_latest_outages` et `app_active_outages` sont maintenues de façon incrémentale afin d'éviter de retraiter l'ensemble de l'historique à chaque collecte. Les analyses plus lourdes, notamment les agrégations quotidiennes et le rapport de qualité, sont rafraîchies périodiquement et peuvent être reconstruites lors de la maintenance.
+
+## Convention des fuseaux horaires
+
+Le pipeline utilise maintenant des timestamps PostgreSQL `TIMESTAMPTZ` et applique explicitement les conventions suivantes :
+
+- `captured_at` est généré par ProjetHydro en **UTC** ;
+- `start_time` et `estimated_restore` fournis sans offset par Hydro-Québec sont interprétés comme des heures locales `America/Toronto`, puis convertis en UTC pour le stockage ;
+- le dashboard reconvertit les horodatages dans `America/Toronto` pour l'affichage ;
+- `app_daily_summary` utilise la **date civile du Québec**, et non la date UTC, pour classer une capture dans une journée.
+
+La migration des anciennes colonnes `TIMESTAMP` vers `TIMESTAMPTZ` est automatique et idempotente. Lors du premier refresh après migration, `app_latest_outages` est reconstruit afin de recalculer les durées avec les timestamps corrigés.
+
+## Sauvegarde et reprise d'un snapshot
+
+Le workflow horaire crée une archive `csv.gz` avant la synchro Supabase puis l'envoie dans les artifacts du run GitHub Actions. Chaque manifeste contient le `snapshot_id`, le nombre de pannes et des checksums SHA-256. La rétention est configurée à **30 jours**.
+
+Si une synchro Supabase échoue après une collecte réussie :
+
+1. télécharger l'artifact `hydro-raw-<run_id>-<attempt>` du run concerné ;
+2. extraire l'artifact ;
+3. restaurer le snapshot à partir de son manifeste JSON :
+
+```bash
+python scripts/restore_snapshot_archive.py chemin/vers/le_manifeste.json
+```
+
+4. relancer la synchro normale :
+
+```bash
+python scripts/sync_to_supabase.py
+python scripts/refresh_supabase_analytics.py
+```
+
+Les contraintes d'unicité et `snapshot_id` rendent ce rejeu idempotent.
 
 ## Enrichissement géospatial
 
@@ -114,7 +150,10 @@ ProjetHydro/
 ├── dashboard/
 │   └── streamlit_app.py            # Application Streamlit
 ├── scripts/
-│   ├── fetch_outages.py            # Collecte et normalisation
+│   ├── fetch_outages.py            # Collecte, retries HTTP et normalisation
+│   ├── archive_snapshot.py         # Archive brute + checksums
+│   ├── restore_snapshot_archive.py # Restauration/rejeu d'un artifact
+│   ├── time_utils.py               # Conventions UTC / America/Toronto
 │   ├── sync_to_supabase.py         # Synchronisation PostgreSQL
 │   ├── refresh_supabase_analytics.py
 │   ├── build_warehouse.py          # Workflow DuckDB local
@@ -137,7 +176,11 @@ Le pipeline comprend plusieurs mécanismes destinés à rendre les traitements p
 - snapshots atomiques identifiés par `snapshot_id`, y compris lorsqu'aucune panne n'est active ;
 - journal `collection_runs` avec statuts `pending`, `success` et `error` ;
 - déduplication des observations par panne et timestamp de capture ;
+- archive brute de chaque collecte avant la synchro Supabase, conservée 30 jours dans GitHub Actions ;
+- restauration contrôlée d'un snapshot archivé avec vérification SHA-256 ;
 - synchronisation avec une petite fenêtre de reprise pour récupérer d'éventuelles arrivées tardives ;
+- sessions HTTP avec retries, backoff exponentiel et gestion des statuts `429/500/502/503/504` ;
+- stockage `TIMESTAMPTZ` avec séparation explicite UTC / heure locale du Québec ;
 - rafraîchissement incrémental des tables les plus consultées ;
 - index PostgreSQL pour les accès fréquents ;
 - rapport de qualité des données ;
