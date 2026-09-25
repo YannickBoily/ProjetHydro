@@ -43,6 +43,71 @@ st.set_page_config(
 )
 
 # =============================================================================
+# Google Analytics 4
+# =============================================================================
+
+GA_MEASUREMENT_ID = "G-RLV9TKJE88"
+
+GA_TRACKER_JS = f"""
+export default function(component) {{
+    const pageName = component.data?.page || "Dashboard";
+
+    // Charger Google Analytics une seule fois
+    if (!window.__ga4DashboardLoaded) {{
+        window.dataLayer = window.dataLayer || [];
+
+        window.gtag = window.gtag || function() {{
+            window.dataLayer.push(arguments);
+        }};
+
+        const script = document.createElement("script");
+        script.async = true;
+        script.src = "https://www.googletagmanager.com/gtag/js?id={GA_MEASUREMENT_ID}";
+        document.head.appendChild(script);
+
+        window.gtag("js", new Date());
+
+        // On désactive le page_view automatique,
+        // car Streamlit rerun souvent le script Python.
+        window.gtag("config", "{GA_MEASUREMENT_ID}", {{
+            send_page_view: false
+        }});
+
+        window.__ga4DashboardLoaded = true;
+    }}
+
+    // Créer un nom de page propre
+    const slug = pageName
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\\u0300-\\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+
+    // Éviter qu'un simple rerun Streamlit crée un faux page_view
+    const storageKey = "ga4_dashboard_last_page";
+    const lastPage = sessionStorage.getItem(storageKey);
+
+    if (lastPage !== pageName) {{
+        window.gtag("event", "page_view", {{
+            page_title: "Dashboard | " + pageName,
+            page_location: window.location.href,
+            page_path: "/dashboard/" + slug
+        }});
+
+        sessionStorage.setItem(storageKey, pageName);
+    }}
+}}
+"""
+
+ga_tracker = st.components.v2.component(
+    "google_analytics_tracker",
+    js=GA_TRACKER_JS,
+)
+
+
+
+# =============================================================================
 # Style visuel
 # =============================================================================
 st.markdown(
@@ -1682,7 +1747,10 @@ page = st.sidebar.radio(
     label_visibility="collapsed",
     key="navigation_page",
 )
-
+ga_tracker(
+    data={"page": page},
+    key="ga4_dashboard_tracker",
+)
 st.sidebar.divider()
 st.sidebar.caption(f"Source : {DATA_SOURCE}")
 
