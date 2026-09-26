@@ -27,7 +27,52 @@ _REPO_ROOT_FOR_IMPORTS = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT_FOR_IMPORTS) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT_FOR_IMPORTS))
 
-from scripts.time_utils import normalize_capture_series, normalize_hydro_local_series
+
+from dashboard.config import ACCENT_COLOR, ACTIVE_FILE, DAILY_FILE, LATEST_FILE, QUALITY_FILE, RAW_FILE, SOURCE_LIMIT_CHECKS
+from dashboard.data_access import (
+    load_csv,
+    load_supabase_active,
+    load_supabase_daily_summary,
+    load_supabase_history,
+    load_supabase_latest,
+    load_supabase_latest_metrics,
+    load_supabase_quality_report,
+    load_supabase_recent_outages,
+    using_supabase,
+)
+from dashboard.view_helpers import (
+    add_display_columns,
+    bool_rate,
+    build_active_snapshot_at_time,
+    enrich_raw_history,
+    format_int,
+    format_pct,
+    format_quebec_datetime,
+    get_cause_column,
+    get_geo,
+    latest_timestamp,
+    make_download,
+    prepare_quality_report,
+    show_table,
+)
+from dashboard.components import (
+    clean_chart_layout,
+    render_cause_donut,
+    render_cause_impact,
+    render_clean_map,
+    render_compact_ranking,
+    render_duration_dotplot,
+    render_full_data_access,
+    render_horizontal_ranking,
+    render_page_header,
+    render_priority_list,
+    render_section_header,
+    render_status,
+    representative_outages,
+    safe_numeric_sum,
+    unique_outage_count,
+)
+
 
 
 # =============================================================================
@@ -35,13 +80,7 @@ from scripts.time_utils import normalize_capture_series, normalize_hydro_local_s
 # =============================================================================
 
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
 
-RAW_FILE = ROOT_DIR / "data" / "raw" / "hydroquebec_history.csv"
-ACTIVE_FILE = ROOT_DIR / "data" / "processed" / "active_outages.csv"
-LATEST_FILE = ROOT_DIR / "data" / "processed" / "latest_outages.csv"
-DAILY_FILE = ROOT_DIR / "data" / "processed" / "daily_summary.csv"
-QUALITY_FILE = ROOT_DIR / "data" / "processed" / "data_quality_report.csv"
 
 st.set_page_config(
     page_title="Hydro-Québec | Suivi des pannes",
@@ -418,540 +457,57 @@ st.markdown(
 
 # Traductions
 
-CAUSE_TRANSLATIONS = {
-    "unknown": "Inconnue",
-    "other": "Autre",
-    "equipment": "Bris d’équipement",
-    "vegetation": "Végétation",
-    "accident": "Accident",
-    "weather": "Conditions météorologiques",
-    "animal": "Animal",
-}
 
-STATUS_TRANSLATIONS = {
-    "new": "Nouvelle panne",
-    "assigned": "Travaux assignés",
-    "en_route": "Équipe en route",
-    "working": "Équipe au travail",
-}
 
-QUALITY_TRANSLATIONS = {
-    "pass": "Réussi",
-    "fail": "Échec",
-    "info": "Information",
-    "critical": "Critique",
-    "warning": "Avertissement",
-}
 
-CHECK_TRANSLATIONS = {
-    "missing_outage_id": "ID de panne manquant",
-    "missing_captured_at": "Moment de capture manquant",
-    "negative_customers_affected": "Clients affectés négatifs",
-    "invalid_coordinates": "Coordonnées invalides",
-    "estimated_restore_before_start_time": "Rétablissement estimé avant le début",
-    "captured_at_before_start_time": "Capture avant le début de la panne",
-    "duplicate_outage_id_captured_at": "Doublon panne + capture",
-    "unknown_cause_rows": "Cause inconnue",
-}
 
-COLUMN_LABELS = {
-    "outage_id": "ID de panne",
-    "short_outage_id": "ID court",
-    "customers_affected": "Clients affectés",
-    "start_time": "Début",
-    "estimated_restore": "Rétablissement estimé",
-    "status_fr": "Statut",
-    "analysis_cause_label_fr": "Cause",
-    "latest_raw_cause_label_fr": "Cause brute",
-    "history_cause_label_fr": "Cause",
-    "municipality_label": "Municipalité",
-    "mrc_name": "MRC",
-    "region_name": "Région",
-    "active_capture_at": "Capture active",
-    "latest_row_captured_at": "Dernière capture",
-    "captured_at": "Capture",
-    "first_capture_at": "Première capture",
-    "last_capture_at": "Dernière capture",
-    "capture_count": "Captures",
-    "observed_duration_hours": "Durée observée, h",
-    "outage_age_hours_at_capture": "Âge, h",
-    "restore_eta_hours_at_capture": "ETA rétablissement, h",
-    "lon": "Longitude",
-    "lat": "Latitude",
-    "is_major_outage_fr": "Panne majeure",
-    "has_known_cause_fr": "Cause connue",
-    "is_geocoded_fr": "Géocodée",
-    "date": "Date",
-    "max_active_outages_estimate": "Pannes actives max",
-    "max_customers_affected": "Clients affectés max",
-    "new_outages_detected": "Nouvelles pannes",
-    "max_municipalities_affected": "Municipalités touchées max",
-    "max_major_outages": "Pannes majeures max",
-    "snapshots_count": "Captures",
-    "avg_active_outages_estimate": "Pannes actives moy.",
-    "avg_customers_affected": "Clients affectés moy.",
-    "check_name_fr": "Contrôle",
-    "severity_fr": "Sévérité",
-    "status_quality_fr": "Statut",
-    "rows_affected": "Lignes affectées",
-    "failed_rate_pct": "Taux affecté, %",
-    "description": "Description",
-}
 
-PLOT_TEMPLATE = "plotly_dark"
-SOURCE_LIMIT_CHECKS = {"unknown_cause_rows"}
-QUEBEC_TIMEZONE = "America/Toronto"
-CACHE_TTL_SECONDS = 900
-ACTIVE_CACHE_TTL_SECONDS = 900
-RECENT_CACHE_TTL_SECONDS = 3600
-DAILY_CACHE_TTL_SECONDS = 21600
-QUALITY_CACHE_TTL_SECONDS = 21600
-DEFAULT_HISTORY_DAYS = 90
-DEFAULT_HISTORY_ROWS_LIMIT = 10_000
 
-TIMESTAMP_COLUMNS = (
-    "start_time",
-    "estimated_restore",
-    "captured_at",
-    "active_capture_at",
-    "latest_row_captured_at",
-    "first_capture_at",
-    "last_capture_at",
-    "known_cause_last_seen_at",
-    "created_at",
-)
 
-NUMERIC_COLUMNS = (
-    "customers_affected",
-    "municipality_id",
-    "capture_count",
-    "observed_duration_hours",
-    "outage_age_hours_at_capture",
-    "outage_age_hours_at_latest_capture",
-    "restore_eta_hours_at_capture",
-    "restore_eta_hours_at_latest_capture",
-    "lon",
-    "lat",
-    "rows_affected",
-    "total_rows",
-    "failed_rate_pct",
-    "snapshots_count",
-    "max_active_outages_estimate",
-    "avg_active_outages_estimate",
-    "max_customers_affected",
-    "avg_customers_affected",
-    "max_municipalities_affected",
-    "max_major_outages",
-    "new_outages_detected",
-    "raw_rows_count",
-    "unique_outages_observed",
-    "unknown_cause_rows",
-    "municipalities_observed",
-)
 
 
 # Chargement et normalisation des données
-def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Normaliser les types communs aux sources CSV et Supabase."""
-    if df.empty:
-        return df
-
-    normalized = df.copy()
-
-    # Hydro start/restore values in legacy CSV files are Quebec wall-clock
-    # timestamps, while capture-derived values are UTC wall-clock timestamps.
-    # Supabase TIMESTAMPTZ values and newer CSV rows already carry an offset;
-    # the helpers preserve those offsets and normalize everything to UTC first.
-    hydro_local_columns = {"start_time", "estimated_restore"}
-    for column in TIMESTAMP_COLUMNS:
-        if column not in normalized.columns:
-            continue
-        if column in hydro_local_columns:
-            parsed = normalize_hydro_local_series(normalized[column])
-        else:
-            parsed = normalize_capture_series(normalized[column])
-        normalized[column] = parsed.dt.tz_convert(QUEBEC_TIMEZONE)
-
-    if "date" in normalized.columns:
-        normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
-
-    for column in NUMERIC_COLUMNS:
-        if column in normalized.columns:
-            normalized[column] = pd.to_numeric(
-                normalized[column],
-                errors="coerce",
-            )
-
-    return normalized
 
 
-@st.cache_data(show_spinner=False, ttl=CACHE_TTL_SECONDS)
-def load_csv(path: Path) -> pd.DataFrame:
-    """Charger un fichier CSV et normaliser les colonnes utilisées par l'app."""
-    if not path.exists():
-        return pd.DataFrame()
-
-    return normalize_dataframe(pd.read_csv(path, low_memory=False))
 
 
 # Accès à Supabase / PostgreSQL
 
-def get_config_value(name: str, default: Any = None) -> Any:
-    value = os.environ.get(name)
-    if value:
-        return value
-    try:
-        return st.secrets.get(name, default)
-    except Exception:
-        return default
-
-
-def using_supabase() -> bool:
-    """Indiquer si une connexion Supabase est configurée."""
-    return bool(get_config_value("SUPABASE_DB_URL"))
-
-
-@st.cache_resource(show_spinner=False)
-def get_supabase_engine():
-    """Créer et réutiliser le moteur PostgreSQL/Supabase."""
-    database_url = get_config_value("SUPABASE_DB_URL")
-    database_hostaddr = get_config_value("SUPABASE_DB_HOSTADDR")
-
-    if not database_url:
-        return None
-
-    try:
-        from sqlalchemy import create_engine
-    except ImportError as exc:
-        st.error(
-            "La dépendance `SQLAlchemy` est manquante."
-        )
-        raise exc
-
-    # Forcer SQLAlchemy à utiliser psycopg2-binary
-    database_url = str(database_url).strip()
-
-    if database_url.startswith("postgresql://"):
-        database_url = database_url.replace(
-            "postgresql://",
-            "postgresql+psycopg2://",
-            1,
-        )
-    elif database_url.startswith("postgres://"):
-        database_url = database_url.replace(
-            "postgres://",
-            "postgresql+psycopg2://",
-            1,
-        )
-
-    connect_args = {
-        "sslmode": "require",
-        "connect_timeout": 10,
-    }
-
-    if database_hostaddr:
-        connect_args["hostaddr"] = database_hostaddr
-
-    return create_engine(
-        database_url,
-        connect_args=connect_args,
-        pool_pre_ping=True,
-        pool_recycle=240,
-        use_native_hstore=False,
-    )
-
-
-def load_supabase_query(query: str) -> pd.DataFrame:
-    """Exécuter une requête PostgreSQL/Supabase et normaliser le résultat."""
-    engine = get_supabase_engine()
-
-    if engine is None:
-        return pd.DataFrame()
-
-    df = pd.read_sql_query(
-        query,
-        engine,
-    )
-
-    return normalize_dataframe(df)
-
-
-def get_supabase_history_days() -> int:
-    """Lire la profondeur d’historique configurée, avec un backup."""
-    raw_value = get_config_value("SUPABASE_HISTORY_DAYS", str(DEFAULT_HISTORY_DAYS))
-    try:
-        days = int(raw_value)
-    except (TypeError, ValueError):
-        days = DEFAULT_HISTORY_DAYS
-
-    return max(days, 1)
-
-
-def get_supabase_history_rows_limit() -> int:
-    """Lire la limite de lignes historiques, avec une valeur de backup safe."""
-    raw_value = get_config_value(
-        "SUPABASE_HISTORY_ROWS_LIMIT",
-        str(DEFAULT_HISTORY_ROWS_LIMIT),
-    )
-    try:
-        rows_limit = int(raw_value)
-    except (TypeError, ValueError):
-        rows_limit = DEFAULT_HISTORY_ROWS_LIMIT
-
-    return max(rows_limit, 1000)
-
-
-@st.cache_data(show_spinner=False, ttl=ACTIVE_CACHE_TTL_SECONDS)
-def load_supabase_active() -> pd.DataFrame:
-    """Charger les pannes actives et faire fitter les noms des colonnes avec les exports CSV."""
-    query = """
-        SELECT *
-        FROM app_active_outages
-        ORDER BY customers_affected DESC NULLS LAST;
-    """
-    df = load_supabase_query(query)
-
-    if not df.empty:
-        # Harmonise les noms de colonnes avec ceux des exports CSV.
-        if "active_capture_at" not in df.columns and "latest_row_captured_at" in df.columns:
-            df["active_capture_at"] = df["latest_row_captured_at"]
-
-        if (
-            "outage_age_hours_at_capture" not in df.columns
-            and "outage_age_hours_at_latest_capture" in df.columns
-        ):
-            df["outage_age_hours_at_capture"] = df["outage_age_hours_at_latest_capture"]
-
-        if (
-            "restore_eta_hours_at_capture" not in df.columns
-            and "restore_eta_hours_at_latest_capture" in df.columns
-        ):
-            df["restore_eta_hours_at_capture"] = df["restore_eta_hours_at_latest_capture"]
-
-    return df
-
-
-@st.cache_data(show_spinner=False, ttl=RECENT_CACHE_TTL_SECONDS)
-def load_supabase_latest() -> pd.DataFrame:
-    """Charger la dernière observation connue de chaque panne."""
-    query = """
-        SELECT *
-        FROM app_latest_outages
-        ORDER BY last_capture_at DESC NULLS LAST, customers_affected DESC NULLS LAST;
-    """
-    return load_supabase_query(query)
-
-
-
-@st.cache_data(show_spinner=False, ttl=RECENT_CACHE_TTL_SECONDS)
-def load_supabase_recent_outages(limit: int = 25) -> pd.DataFrame:
-    """Charger seulement les dernières pannes nécessaires à la page Surveillance."""
-    safe_limit = max(1, min(int(limit), 100))
-    query = f"""
-        SELECT *
-        FROM app_latest_outages
-        ORDER BY first_capture_at DESC NULLS LAST
-        LIMIT {safe_limit};
-    """
-    return load_supabase_query(query)
-
-
-@st.cache_data(show_spinner=False, ttl=QUALITY_CACHE_TTL_SECONDS)
-def load_supabase_latest_metrics() -> pd.DataFrame:
-    """Retourner uniquement les taux nécessaires à la page Qualité."""
-    query = """
-        SELECT
-            100.0 * AVG(CASE WHEN is_geocoded IS TRUE THEN 1.0 ELSE 0.0 END)
-                AS geocoded_rate_pct,
-            100.0 * AVG(CASE WHEN has_known_cause IS TRUE THEN 1.0 ELSE 0.0 END)
-                AS known_cause_rate_pct
-        FROM app_latest_outages;
-    """
-    return load_supabase_query(query)
-
-
-@st.cache_data(show_spinner=False, ttl=RECENT_CACHE_TTL_SECONDS)
-def load_supabase_history() -> pd.DataFrame:
-    """Charger une fenêtre bornée de l’historique brut enrichi."""
-    days = get_supabase_history_days()
-    rows_limit = get_supabase_history_rows_limit()
-
-    query = f"""
-        WITH bounds AS (
-            SELECT MAX(captured_at) AS max_captured_at
-            FROM raw_outage_snapshots
-            WHERE captured_at IS NOT NULL
-        )
-        SELECT
-            r.outage_id,
-            r.customers_affected,
-            r.start_time,
-            r.estimated_restore,
-            r.status_code,
-            r.status,
-            r.cause_code,
-            r.cause_label,
-            r.municipality_id,
-            r.captured_at,
-            r.lon,
-            r.lat,
-            COALESCE(
-                m.municipality_label,
-                'Municipalité ' || CAST(r.municipality_id AS TEXT)
-            ) AS municipality_label,
-            m.municipality_name,
-            m.municipality_full_name,
-            m.mrc_name,
-            m.region_name,
-            m.is_geocoded
-        FROM raw_outage_snapshots r
-        LEFT JOIN dim_municipalities m
-            ON r.municipality_id = m.municipality_id
-        CROSS JOIN bounds b
-        WHERE r.captured_at IS NOT NULL
-          AND r.captured_at >= b.max_captured_at - INTERVAL '{days} days'
-        ORDER BY r.captured_at DESC
-        LIMIT {rows_limit};
-    """
-
-    return load_supabase_query(query)
-
-
-@st.cache_data(show_spinner=False, ttl=DAILY_CACHE_TTL_SECONDS)
-def load_supabase_daily_summary() -> pd.DataFrame:
-    """Charger les agrégats quotidiens utilisés par les graphiques."""
-    query = """
-        SELECT *
-        FROM app_daily_summary
-        ORDER BY date;
-    """
-    return load_supabase_query(query)
-
-
-@st.cache_data(show_spinner=False, ttl=QUALITY_CACHE_TTL_SECONDS)
-def load_supabase_quality_report() -> pd.DataFrame:
-    """Charger le rapport de qualité, trié par sévérité."""
-    query = """
-        SELECT *
-        FROM app_data_quality_report
-        ORDER BY
-            CASE severity
-                WHEN 'critical' THEN 1
-                WHEN 'warning' THEN 2
-                WHEN 'info' THEN 3
-                ELSE 4
-            END,
-            check_name;
-    """
-
-    return load_supabase_query(query)
-
-
-def translate_text(
-    value: Any,
-    mapping: dict[str, str],
-    default: str = "Inconnue",
-) -> str:
-    """Traduire une valeur source tout en conservant les libellés inconnus."""
-    if pd.isna(value):
-        return default
-
-    key = str(value).strip().lower()
-    if key == "":
-        return default
-
-    return mapping.get(key, str(value).strip())
-
-
-def yes_no(value: Any) -> str:
-    """Convertir une valeur booléenne courante en libellé français."""
-    return "Oui" if str(value).lower() in {"true", "1", "yes"} else "Non"
-
-
-def short_id(value: Any, max_len: int = 18) -> str:
-    """Raccourcir un identifiant pour l’affichage sans modifier sa valeur source."""
-    if pd.isna(value):
-        return ""
-    text = str(value)
-    return text if len(text) <= max_len else text[:max_len] + "…"
-
-
-def add_display_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Ajouter les colonnes lisibles destinées à l’interface utilisateur."""
-    if df.empty:
-        return df
-
-    df = df.copy()
-
-    if "outage_id" in df.columns:
-        df["short_outage_id"] = df["outage_id"].apply(short_id)
-
-    if "analysis_cause_label" in df.columns:
-        df["analysis_cause_label_fr"] = df["analysis_cause_label"].apply(
-            lambda x: translate_text(x, CAUSE_TRANSLATIONS)
-        )
-
-    if "latest_raw_cause_label" in df.columns:
-        df["latest_raw_cause_label_fr"] = df["latest_raw_cause_label"].apply(
-            lambda x: translate_text(x, CAUSE_TRANSLATIONS)
-        )
-
-    if "cause_label" in df.columns:
-        df["history_cause_label_fr"] = df["cause_label"].apply(
-            lambda x: translate_text(x, CAUSE_TRANSLATIONS)
-        )
-
-    if "status" in df.columns:
-        df["status_fr"] = df["status"].apply(
-            lambda x: translate_text(x, STATUS_TRANSLATIONS, default="Non disponible")
-        )
-
-    if "has_known_cause" in df.columns:
-        df["has_known_cause_fr"] = df["has_known_cause"].apply(yes_no)
-
-    if "is_geocoded" in df.columns:
-        df["is_geocoded_fr"] = df["is_geocoded"].apply(yes_no)
-
-    if "is_major_outage" in df.columns:
-        df["is_major_outage_fr"] = df["is_major_outage"].apply(yes_no)
-
-    if "municipality_label" not in df.columns and "municipality_id" in df.columns:
-        df["municipality_label"] = "Municipalité " + df["municipality_id"].astype(str)
-
-    for col in ["lat", "lon"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-
-    return df
-
-
-def prepare_quality_report(df: pd.DataFrame) -> pd.DataFrame:
-    """Ajouter les libellés français au petit rapport de qualité chargé à la demande."""
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    quality_df = df.copy()
-
-    if "check_name" in quality_df.columns:
-        quality_df["check_name_fr"] = quality_df["check_name"].apply(
-            lambda x: translate_text(x, CHECK_TRANSLATIONS, default=str(x))
-        )
-        quality_df["description_fr"] = quality_df["check_name"].map(
-            QUALITY_DESCRIPTION_FR
-        ).fillna(quality_df.get("description", ""))
-
-    if "severity" in quality_df.columns:
-        quality_df["severity_fr"] = quality_df["severity"].apply(
-            lambda x: translate_text(x, QUALITY_TRANSLATIONS, default=str(x))
-        )
-
-    if "status" in quality_df.columns:
-        quality_df["status_quality_fr"] = quality_df["status"].apply(
-            lambda x: translate_text(x, QUALITY_TRANSLATIONS, default=str(x))
-        )
-
-    return quality_df
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # =============================================================================
@@ -959,300 +515,35 @@ def prepare_quality_report(df: pd.DataFrame) -> pd.DataFrame:
 # =============================================================================
 
 # Lien public du Google Form utilisé pour les demandes d'accès.
-DATA_REQUEST_URL = "https://docs.google.com/forms/d/e/1FAIpQLSdSkwsCNaj0u_gIbzXQXTjGklIA4b40KodbTQ2n-H4oiJHwDw/viewform?usp=publish-editor"
-
-
-def get_data_request_url() -> str:
-    """Retourner le lien public du formulaire de demande d'accès."""
-    return str(DATA_REQUEST_URL or "").strip()
-
-
-def render_full_data_access() -> None:
-    """Présenter l'accès aux données sans générer d'export côté Supabase."""
-    render_section_header("Accès aux données", "Sur demande seulement")
-    st.info(
-        "Le téléchargement direct est désactivé afin de préserver les ressources "
-        "du tableau de bord et de la base de données. Pour obtenir le jeu de données, "
-        "remplissez le formulaire de demande."
-    )
-
-    request_url = get_data_request_url()
-
-    if not request_url:
-        st.warning("Le formulaire de demande n'est pas configuré.")
-        return
-
-    st.link_button(
-        "📝 Faire une demande d'accès aux données",
-        request_url,
-        width="stretch",
-    )
-    st.caption(
-        "Le formulaire s'ouvre dans Google Forms. "
-    )
-
-def enrich_raw_history(raw_df: pd.DataFrame, latest_df: pd.DataFrame) -> pd.DataFrame:
-    """Compléter l’historique avec les métadonnées territoriales disponibles."""
-    if raw_df.empty:
-        return raw_df
-
-    history = raw_df.copy()
-
-    lookup_cols = [
-        "municipality_id",
-        "municipality_label",
-        "municipality_name",
-        "mrc_name",
-        "region_name",
-        "is_geocoded",
-        "is_geocoded_fr",
-    ]
-
-    available_lookup_cols = [col for col in lookup_cols if col in latest_df.columns]
-
-    if "municipality_id" in history.columns and "municipality_id" in available_lookup_cols:
-        lookup = (
-            latest_df[available_lookup_cols]
-            .dropna(subset=["municipality_id"])
-            .drop_duplicates("municipality_id")
-        )
-
-        columns_to_add = [col for col in available_lookup_cols if col != "municipality_id"]
-        history = history.drop(
-            columns=[col for col in columns_to_add if col in history.columns],
-            errors="ignore",
-        )
-
-        history = history.merge(
-            lookup,
-            on="municipality_id",
-            how="left",
-        )
-
-    if "municipality_label" not in history.columns and "municipality_id" in history.columns:
-        history["municipality_label"] = "Municipalité " + history["municipality_id"].astype(str)
-
-    return add_display_columns(history)
-
-
-def prepare_display_table(df: pd.DataFrame, columns: list[str] | None = None) -> pd.DataFrame:
-    """Prepare a dataframe for safe Streamlit display."""
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    out = df.copy()
-
-    if columns is not None:
-        selected = [col for col in columns if col in out.columns]
-        out = out[selected]
-
-    pairs = {
-        "status_fr": "status",
-        "analysis_cause_label_fr": "analysis_cause_label",
-        "latest_raw_cause_label_fr": "latest_raw_cause_label",
-        "history_cause_label_fr": "cause_label",
-        "has_known_cause_fr": "has_known_cause",
-        "is_geocoded_fr": "is_geocoded",
-        "is_major_outage_fr": "is_major_outage",
-        "check_name_fr": "check_name",
-        "status_quality_fr": "status",
-        "severity_fr": "severity",
-    }
-
-    for readable, raw_col in pairs.items():
-        if readable in out.columns and raw_col in out.columns:
-            out = out.drop(columns=[raw_col])
-
-    out = out.rename(columns=COLUMN_LABELS)
-    clean_columns = []
-    seen = {}
-
-    for idx, col in enumerate(out.columns):
-        name = "" if col is None else str(col).strip()
-        if not name:
-            name = f"Colonne {idx + 1}"
-
-        if name not in seen:
-            seen[name] = 1
-            clean_columns.append(name)
-        else:
-            seen[name] += 1
-            clean_columns.append(f"{name} ({seen[name]})")
-
-    out.columns = clean_columns
-
-    # Reset index so Streamlit does not try to render a complex/pinned index column.
-    out = out.reset_index(drop=True)
-
-    return out
-
-
-def show_table(
-    df: pd.DataFrame,
-    columns: list[str] | None = None,
-    height: int | str = "auto",
-) -> None:
-    """Display a dataframe while avoiding Streamlit frontend grid crashes."""
-    display_df = prepare_display_table(df, columns)
-
-    if display_df.empty:
-        st.info("Aucune donnée à afficher selon les filtres actuels.")
-        return
-
-    max_display_rows = 250
-
-    if len(display_df) > max_display_rows:
-        st.caption(
-            f"Affichage des {max_display_rows:,} premières lignes sur {len(display_df):,}. "
-            "L'accès au jeu complet peut être demandé avec le formulaire"
-        )
-        display_df = display_df.head(max_display_rows)
 
-    try:
-        st.dataframe(
-            display_df,
-            width="stretch",
-            height=height,
-            hide_index=True,
-        )
-    except Exception:
-        st.warning(
-            "Le tableau interactif n'a pas pu être affiché. "
-            "Affichage d'une version simplifiée."
-        )
-        st.markdown(
-            display_df.head(200).to_html(index=False, escape=True),
-            unsafe_allow_html=True,
-        )
 
 
-def format_int(value: Any) -> str:
-    """Formater une valeur numérique comme entier avec séparateurs français."""
-    if pd.isna(value):
-        return "0"
-    return f"{int(round(float(value))):,}".replace(",", " ")
-
-
-def format_pct(value: Any) -> str:
-    """Formater une valeur numérique en pourcentage à une décimale."""
-    if pd.isna(value):
-        return "0 %"
-    return f"{float(value):.1f} %"
 
 
-def bool_rate(series: pd.Series) -> float:
-    """Calculer le pourcentage de valeurs interprétées comme vraies."""
-    if series.empty:
-        return 0.0
-    return round(series.astype(str).str.lower().isin(["true", "1", "yes"]).mean() * 100, 2)
 
 
-def latest_timestamp(*frames: pd.DataFrame):
-    """Retourner l’horodatage le plus récent parmi plusieurs DataFrames."""
-    values = []
-
-    for df in frames:
-        if df.empty:
-            continue
-        for col in [
-            "active_capture_at",
-            "latest_row_captured_at",
-            "last_capture_at",
-            "captured_at",
-        ]:
-            if col in df.columns and not df[col].dropna().empty:
-                values.append(df[col].max())
-
-    if not values:
-        return None
-
-    return max(values)
-
-
-def get_geo(df: pd.DataFrame) -> pd.DataFrame:
-    """Conserver uniquement les observations possédant des coordonnées valides."""
-    if df.empty or "lat" not in df.columns or "lon" not in df.columns:
-        return pd.DataFrame()
-
-    return df.dropna(subset=["lat", "lon"]).copy()
-
-
-def ensure_quebec_timestamp(value: Any) -> pd.Timestamp | None:
-    """Convertir une valeur en horodatage conscient du fuseau du Québec."""
-    if value is None or pd.isna(value):
-        return None
-
-    timestamp = pd.Timestamp(value)
-
-    if timestamp.tzinfo is None:
-        timestamp = timestamp.tz_localize("UTC")
-
-    return timestamp.tz_convert(QUEBEC_TIMEZONE)
-
-
-def format_quebec_datetime(value: Any) -> str:
-    """Format a timestamp in Quebec time without depending on OS locale."""
-    timestamp = ensure_quebec_timestamp(value)
-    if timestamp is None:
-        return "Non disponible"
-
-    timezone_label = {
-        "EST": "HNE",
-        "EDT": "HAE",
-    }.get(timestamp.tzname(), timestamp.tzname() or "")
-
-    return f"{timestamp:%Y-%m-%d à %H:%M} {timezone_label}".strip()
-
-
-def get_cause_column(df: pd.DataFrame) -> str | None:
-    """Choose the readable cause column available in a dataframe."""
-    for col in ["analysis_cause_label_fr", "history_cause_label_fr", "latest_raw_cause_label_fr"]:
-        if col in df.columns:
-            return col
-    return None
-
-
-def make_download(df: pd.DataFrame, label: str, filename: str):
-    """Ne pas exposer de téléchargement direct; l'accès passe par le formulaire."""
-    if df is None or df.empty:
-        return
-
-    st.caption(
-        "Téléchargement direct désactivé. Utilisez le formulaire de demande "
-        "d'accès aux données ci-dessous."
-    )
-
-
-def build_active_snapshot_at_time(
-    history_df: pd.DataFrame,
-    selected_capture_at: pd.Timestamp,
-    window_minutes: int = 5,
-) -> pd.DataFrame:
-    """Reconstruire un instantané autour d’une capture historique donnée."""
-    if history_df.empty or "captured_at" not in history_df.columns:
-        return pd.DataFrame()
-
-    history = history_df.dropna(subset=["captured_at"]).copy()
-
-    window_start = selected_capture_at - pd.Timedelta(minutes=window_minutes)
-    window_end = selected_capture_at + pd.Timedelta(minutes=window_minutes)
-
-    snapshot = history[
-        (history["captured_at"] >= window_start)
-        & (history["captured_at"] <= window_end)
-    ].copy()
-
-    if snapshot.empty:
-        return snapshot
-
-    if "outage_id" in snapshot.columns:
-        snapshot = (
-            snapshot.sort_values("captured_at")
-            .groupby("outage_id", as_index=False)
-            .tail(1)
-        )
-
-    return snapshot
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def apply_global_filters_to_history(snapshot: pd.DataFrame) -> pd.DataFrame:
@@ -1290,478 +581,37 @@ def apply_global_filters_to_history(snapshot: pd.DataFrame) -> pd.DataFrame:
 # Composants visuels et agrégations du tableau de bord
 # =============================================================================
 
-ACCENT_COLOR = "#38bdf8"
-MAP_STYLE = "carto-darkmatter"
-MAP_MARKER_MIN_SIZE = 4
-MAP_MARKER_MAX_SIZE = 18
-
-CAUSE_COLORS = {
-    "Inconnue": "#64748b",
-    "Autre": "#a78bfa",
-    "Bris d’équipement": "#f59e0b",
-    "Végétation": "#22c55e",
-    "Accident": "#ef4444",
-    "Conditions météorologiques": "#38bdf8",
-    "Animal": "#f472b6",
-}
-
-QUALITY_DESCRIPTION_FR = {
-    "missing_outage_id": "Chaque observation doit posséder un identifiant de panne.",
-    "missing_captured_at": "Chaque observation doit contenir un moment de capture.",
-    "negative_customers_affected": "Le nombre de clients affectés ne peut pas être négatif.",
-    "invalid_coordinates": (
-        "Les coordonnées doivent se trouver dans une plage géographique valide."
-    ),
-    "estimated_restore_before_start_time": (
-        "Le rétablissement estimé ne doit pas précéder le début de la panne."
-    ),
-    "captured_at_before_start_time": (
-        "La capture ne doit pas précéder le début déclaré de la panne."
-    ),
-    "duplicate_outage_id_captured_at": (
-        "Une panne ne doit apparaître qu’une fois par moment de capture."
-    ),
-    "unknown_cause_rows": "La source ne fournit pas toujours la cause au moment de la capture.",
-}
-
-
-def render_page_header(eyebrow: str, title: str, description: str) -> None:
-    """Afficher l’en-tête éditorial d’une page du tableau de bord."""
-    st.markdown(
-        f"""
-        <div class="page-head">
-            <div class="page-eyebrow">{html.escape(eyebrow)}</div>
-            <h1 class="page-title">{html.escape(title)}</h1>
-            <div class="page-description">{html.escape(description)}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_section_header(title: str, note: str | None = None) -> None:
-    """Afficher un titre de section accompagné d’une note facultative."""
-    note_html = f'<span class="section-note">{html.escape(note)}</span>' if note else ""
-    st.markdown(
-        f"""
-        <div class="section-head">
-            <h2 class="section-title">{html.escape(title)}</h2>
-            {note_html}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_status(message: str, level: str = "good") -> None:
-    """Afficher une bannière de statut selon le niveau demandé."""
-    class_name = {
-        "good": "status-good",
-        "warning": "status-warning",
-        "danger": "status-danger",
-    }.get(level, "status-good")
-    st.markdown(
-        f'<div class="status-banner {class_name}">{html.escape(message)}</div>',
-        unsafe_allow_html=True,
-    )
-
-
-def unique_outage_count(df: pd.DataFrame) -> int:
-    """Compter les pannes uniques, ou les lignes si aucun identifiant n’existe."""
-    if df is None or df.empty:
-        return 0
-    if "outage_id" in df.columns:
-        return int(df["outage_id"].nunique())
-    return int(len(df))
-
-
-def safe_numeric_sum(df: pd.DataFrame, column: str) -> float:
-    """Additionner une colonne numérique en tolérant les valeurs absentes."""
-    if df is None or df.empty or column not in df.columns:
-        return 0
-    return float(pd.to_numeric(df[column], errors="coerce").fillna(0).sum())
-
-
-def representative_outages(df: pd.DataFrame) -> pd.DataFrame:
-    """Conserver une ligne représentative par panne pour les vues cumulées."""
-    if df is None or df.empty or "outage_id" not in df.columns:
-        return df.copy() if df is not None else pd.DataFrame()
-
-    out = df.copy()
-    if "customers_affected" in out.columns:
-        out["customers_affected"] = pd.to_numeric(out["customers_affected"], errors="coerce")
-        out = (
-            out.sort_values(["outage_id", "customers_affected"], ascending=[True, False])
-            .drop_duplicates("outage_id", keep="first")
-        )
-    elif "captured_at" in out.columns:
-        out = out.sort_values("captured_at").drop_duplicates("outage_id", keep="last")
-    else:
-        out = out.drop_duplicates("outage_id", keep="last")
-    return out
-
-
-def clean_chart_layout(fig, height: int = 420, show_legend: bool = False):
-    """Appliquer la mise en forme commune aux graphiques Plotly."""
-    fig.update_layout(
-        template=PLOT_TEMPLATE,
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        height=height,
-        showlegend=show_legend,
-        font=dict(family="Inter, Segoe UI, Arial", size=12, color="#cbd5e1"),
-        margin=dict(l=8, r=18, t=16, b=8),
-        legend=dict(
-            title=None,
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="left",
-            x=0,
-        ),
-    )
-    fig.update_xaxes(
-        showgrid=True,
-        gridcolor="rgba(148,163,184,0.12)",
-        zeroline=False,
-        title_font=dict(color="#94a3b8"),
-        tickfont=dict(color="#cbd5e1"),
-    )
-    fig.update_yaxes(
-        showgrid=False,
-        zeroline=False,
-        title_font=dict(color="#94a3b8"),
-        tickfont=dict(color="#cbd5e1"),
-    )
-    return fig
-
-
-def render_horizontal_ranking(
-    df: pd.DataFrame,
-    label_col: str,
-    value_col: str,
-    height: int = 420,
-    max_rows: int = 12,
-    axis_title: str = "Clients affectés",
-) -> None:
-    """Afficher un classement horizontal limité aux premières catégories."""
-    if df is None or df.empty or label_col not in df.columns or value_col not in df.columns:
-        st.info("Aucune donnée disponible selon les filtres actuels.")
-        return
-
-    chart_df = df.sort_values(value_col, ascending=False).head(max_rows).sort_values(value_col)
-    fig = px.bar(
-        chart_df,
-        x=value_col,
-        y=label_col,
-        orientation="h",
-        text=value_col,
-        color_discrete_sequence=[ACCENT_COLOR],
-        labels={value_col: axis_title, label_col: ""},
-    )
-    fig.update_traces(
-        texttemplate="%{text:,.0f}",
-        textposition="outside",
-        cliponaxis=False,
-        hovertemplate=f"%{{y}}<br>{axis_title}: %{{x:,.0f}}<extra></extra>",
-    )
-    fig = clean_chart_layout(fig, height=height)
-    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
-
-
-def render_clean_map(
-    df: pd.DataFrame,
-    height: int = 650,
-    max_points: int | None = None,
-) -> None:
-    """Afficher la carte des pannes avec une taille de point proportionnelle."""
-    geo = get_geo(df)
-    if geo.empty:
-        st.warning("Aucune coordonnée valide selon les filtres actuels.")
-        return
-
-    geo = geo.copy()
-    if max_points is not None and len(geo) > max_points:
-        if "customers_affected" in geo.columns:
-            geo = geo.sort_values("customers_affected", ascending=False).head(max_points)
-        else:
-            geo = geo.head(max_points)
-        st.caption(f"Carte limitée aux {len(geo):,} observations les plus importantes.")
-
-    if "customers_affected" in geo.columns:
-        customers = (
-            pd.to_numeric(geo["customers_affected"], errors="coerce")
-            .fillna(0)
-            .clip(lower=0)
-        )
-        geo["taille_carte"] = customers.clip(lower=1).pow(0.35)
-    else:
-        geo["taille_carte"] = 4
-
-    cause_col = get_cause_column(geo)
-    if cause_col:
-        geo[cause_col] = geo[cause_col].fillna("Inconnue")
-    hover_cols = [
-        "customers_affected",
-        "municipality_label",
-        "mrc_name",
-        "region_name",
-        "status_fr",
-        cause_col,
-        "captured_at",
-        "active_capture_at",
-        "start_time",
-        "estimated_restore",
-    ]
-    hover_cols = [col for col in hover_cols if col and col in geo.columns]
-
-    fig = px.scatter_map(
-        geo,
-        lat="lat",
-        lon="lon",
-        size="taille_carte",
-        size_max=MAP_MARKER_MAX_SIZE,
-        color=cause_col,
-        color_discrete_map=CAUSE_COLORS,
-        hover_data=hover_cols,
-        center={"lat": 48.4, "lon": -71.8},
-        zoom=4.65,
-        height=height,
-        labels={
-            "analysis_cause_label_fr": "Cause",
-            "history_cause_label_fr": "Cause",
-            "latest_raw_cause_label_fr": "Cause",
-            "taille_carte": "Importance visuelle",
-        },
-    )
-    # Points principaux
-    fig.update_traces(
-        marker=dict(
-            sizemin=MAP_MARKER_MIN_SIZE,
-        ),
-        opacity=0.90,
-    )
-
-    # -------------------------------------------------------------------------
-    # Halo lumineux autour des points
-    # -------------------------------------------------------------------------
-
-    main_traces = list(fig.data)
-
-    for trace in main_traces:
-        halo = copy.deepcopy(trace)
-
-        # Ne pas afficher le halo dans la légende
-        halo.showlegend = False
-
-        # Le halo ne doit pas avoir son propre tooltip
-        halo.hoverinfo = "skip"
-        halo.hovertemplate = None
-
-    # Halo très transparent
-        halo.opacity = 0.16
-
-    # Agrandir légèrement la couche située derrière le point
-        if halo.marker.size is not None:
-            halo.marker.size = [
-                float(size) * 1.6
-                for size in halo.marker.size
-            ]
-
-        halo.marker.sizemin = MAP_MARKER_MIN_SIZE + 3
-
-        fig.add_trace(halo)
-
-    # Placer les halos derrière les vrais points
-    trace_count = len(main_traces)
-
-    fig.data = (
-        tuple(fig.data[trace_count:])
-        + tuple(fig.data[:trace_count])
-        )
-    fig.update_layout(
-        template=PLOT_TEMPLATE,
-        map_style=MAP_STYLE,
-        paper_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=0, r=0, t=5, b=0),
-        hoverlabel=dict(
-            bgcolor="#111827",
-            bordercolor="#334155",
-            font=dict(
-                color="#f8fafc",
-                size=13,
-                family="Inter, Segoe UI, Arial",
-                ),
-            ),
-        legend=dict(
-            title=None,
-            orientation="h",
-            yanchor="bottom",
-            y=1.01,
-            xanchor="left",
-            x=0,
-            font=dict(size=10),
-        ),
-    )
-    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
-
-
-def render_priority_list(df: pd.DataFrame, rows: int = 6) -> None:
-    """Render a compact priority list without Markdown interpreting HTML as code."""
-    if df is None or df.empty:
-        st.info("Aucune panne à afficher selon les filtres actuels.")
-        return
-
-    ordered = df.copy()
-    if "customers_affected" in ordered.columns:
-        ordered = ordered.sort_values("customers_affected", ascending=False)
-
-    items: list[str] = []
-    for _, row in ordered.head(rows).iterrows():
-        municipality = html.escape(
-            str(row.get("municipality_label", "Municipalité non disponible"))
-        )
-        region = html.escape(str(row.get("region_name", "Région non disponible")))
-        cause = html.escape(
-            str(
-                row.get(
-                    "analysis_cause_label_fr",
-                    row.get("history_cause_label_fr", "Cause non disponible"),
-                )
-            )
-        )
-        customers = html.escape(format_int(row.get("customers_affected", 0)))
-
-        # Garder chaque bloc sur une seule ligne évite que Markdown transforme
-        # les balises indentées en bloc de code.
-        items.append(
-            '<div class="priority-row">'
-            '<div>'
-            f'<div class="priority-name">{municipality}</div>'
-            f'<div class="priority-meta">{region} · {cause}</div>'
-            '</div>'
-            f'<div class="priority-value">{customers}</div>'
-            '</div>'
-        )
-
-    priority_html = '<div class="priority-list">' + ''.join(items) + '</div>'
-    st.markdown(priority_html, unsafe_allow_html=True)
 
 
 
-def render_compact_ranking(
-    df: pd.DataFrame,
-    label_col: str,
-    value_col: str,
-    rows: int = 6,
-    value_suffix: str = "",
-) -> None:
-    """Afficher un classement compact pour varier le rythme visuel du dashboard."""
-    if df is None or df.empty or label_col not in df.columns or value_col not in df.columns:
-        st.info("Aucune donnée disponible selon les filtres actuels.")
-        return
-
-    ordered = df.sort_values(value_col, ascending=False).head(rows)
-    items = []
-    for rank, (_, row) in enumerate(ordered.iterrows(), start=1):
-        label = html.escape(str(row.get(label_col, "Non disponible")))
-        value = html.escape(format_int(row.get(value_col, 0)))
-        items.append(
-            '<div class="priority-row">'
-            '<div>'
-            f'<div class="priority-name"><span class="muted">{rank:02d}</span> &nbsp;{label}</div>'
-            '</div>'
-            f'<div class="priority-value">{value}{html.escape(value_suffix)}</div>'
-            '</div>'
-        )
-    st.markdown('<div class="priority-list">' + ''.join(items) + '</div>', unsafe_allow_html=True)
 
 
-def render_cause_donut(summary: pd.DataFrame, cause_col: str) -> None:
-    """Répartition compacte des pannes par cause."""
-    if summary.empty:
-        st.info("Aucune donnée de cause disponible.")
-        return
-    fig = px.pie(
-        summary,
-        names=cause_col,
-        values="pannes",
-        hole=0.64,
-        color=cause_col,
-        color_discrete_map=CAUSE_COLORS,
-    )
-    fig.update_traces(
-        textposition="inside",
-        textinfo="percent",
-        hovertemplate="%{label}<br>Pannes : %{value:,.0f}<br>Part : %{percent}<extra></extra>",
-    )
-    fig.update_layout(
-        template=PLOT_TEMPLATE,
-        paper_bgcolor="rgba(0,0,0,0)",
-        height=390,
-        margin=dict(l=0, r=0, t=10, b=0),
-        showlegend=True,
-        legend=dict(title=None, orientation="h", y=-0.08, x=0),
-        font=dict(family="Inter, Segoe UI, Arial", color="#cbd5e1"),
-    )
-    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
-def render_cause_impact(summary: pd.DataFrame, cause_col: str) -> None:
-    """Comparer fréquence et impact sans ajouter un second diagramme à barres."""
-    if summary.empty:
-        st.info("Aucune donnée de cause disponible.")
-        return
-    chart = summary.copy()
-    chart["clients_moyens"] = chart["clients_affectes"] / chart["pannes"].clip(lower=1)
-    fig = px.scatter(
-        chart,
-        x="pannes",
-        y="clients_affectes",
-        size="clients_moyens",
-        size_max=44,
-        color=cause_col,
-        color_discrete_map=CAUSE_COLORS,
-        hover_name=cause_col,
-        hover_data={"pannes": True, "clients_affectes": ":,.0f", "clients_moyens": ":,.0f"},
-        labels={
-            "pannes": "Nombre de pannes",
-            "clients_affectes": "Clients affectés",
-            "clients_moyens": "Clients moyens / panne",
-        },
-    )
-    fig.update_traces(marker=dict(opacity=0.88, line=dict(width=1, color="rgba(255,255,255,0.18)")))
-    fig = clean_chart_layout(fig, height=430, show_legend=True)
-    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
-def render_duration_dotplot(df: pd.DataFrame, rows: int = 10) -> None:
-    """Afficher les plus longues durées observées sous forme de dot plot."""
-    if df is None or df.empty or "observed_duration_hours" not in df.columns:
-        st.info("La durée observée n’est pas disponible dans cette source.")
-        return
-    chart = df.dropna(subset=["observed_duration_hours"]).copy()
-    chart["observed_duration_hours"] = pd.to_numeric(
-        chart["observed_duration_hours"], errors="coerce"
-    )
-    chart = chart.dropna(subset=["observed_duration_hours"])
-    chart = chart.sort_values("observed_duration_hours", ascending=False).head(rows)
-    if chart.empty or "municipality_label" not in chart.columns:
-        st.info("Aucune durée disponible.")
-        return
-    chart = chart.sort_values("observed_duration_hours")
-    fig = px.scatter(
-        chart,
-        x="observed_duration_hours",
-        y="municipality_label",
-        size="customers_affected" if "customers_affected" in chart.columns else None,
-        size_max=22,
-        labels={"observed_duration_hours": "Durée observée, h", "municipality_label": ""},
-        hover_data=[c for c in ["customers_affected", "region_name", "status_fr"] if c in chart.columns],
-    )
-    fig.update_traces(marker=dict(size=12 if "customers_affected" not in chart.columns else None))
-    fig = clean_chart_layout(fig, height=430)
-    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def active_filter_summary() -> str:
     """Résumer les filtres actifs dans une phrase compacte."""
