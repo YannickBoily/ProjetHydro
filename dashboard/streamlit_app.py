@@ -38,8 +38,11 @@ from dashboard.data_access import (
     load_supabase_latest_metrics,
     load_supabase_quality_report,
     load_supabase_recent_outages,
+    load_supabase_pipeline_health,
+    clear_dashboard_caches,
     using_supabase,
 )
+from dashboard.pipeline_health import assess_pipeline_health
 from dashboard.view_helpers import (
     add_display_columns,
     bool_rate,
@@ -649,6 +652,7 @@ PAGE_OPTIONS = [
     "Analyse territoriale",
     "Causes",
     "Surveillance",
+    "Santé du pipeline",
     "Qualité des données",
     "Données",
 ]
@@ -666,13 +670,8 @@ ga_tracker(
 st.sidebar.divider()
 st.sidebar.caption(f"Source : {DATA_SOURCE}")
 
-if st.sidebar.button("🔄 Recharger depuis Supabase", width="stretch"):
-    if using_supabase():
-        load_supabase_active.clear()
-        load_supabase_recent_outages.clear()
-        load_supabase_latest_metrics.clear()
-    else:
-        load_csv.clear()
+if st.sidebar.button("🔄 Recharger les données", width="stretch"):
+    clear_dashboard_caches()
     st.rerun()
 
 if using_supabase():
@@ -687,11 +686,14 @@ else:
     active = add_display_columns(load_csv(ACTIVE_FILE))
 
 if active.empty:
-    st.error(
-        "Les données de pannes actives sont manquantes ou indisponibles. "
-        "Vérifie la synchronisation des données puis réessaie."
-    )
-    st.stop()
+    if using_supabase() or ACTIVE_FILE.exists():
+        st.info("Aucune panne active dans le dernier snapshot disponible.")
+    else:
+        st.error(
+            "Les données de pannes actives sont manquantes ou indisponibles. "
+            "Vérifie la synchronisation des données puis réessaie."
+        )
+        st.stop()
 
 # Les jeux de données plus lourds restent vides tant que la page ne les demande pas.
 latest = pd.DataFrame()
@@ -700,12 +702,15 @@ quality = pd.DataFrame()
 recent_outages = pd.DataFrame()
 latest_metrics = pd.DataFrame()
 history_all = pd.DataFrame()
+pipeline_health = pd.DataFrame()
 
 if using_supabase():
     if page == "Vue d’ensemble":
         daily = load_supabase_daily_summary()
     elif page == "Surveillance":
         recent_outages = add_display_columns(load_supabase_recent_outages(25))
+    elif page == "Santé du pipeline":
+        pipeline_health = load_supabase_pipeline_health()
     elif page == "Qualité des données":
         quality = prepare_quality_report(load_supabase_quality_report())
         latest_metrics = load_supabase_latest_metrics()
@@ -1200,6 +1205,108 @@ elif page == "Surveillance":
         "analysis_cause_label_fr", "first_capture_at", "estimated_restore",
     ]
     show_table(recent.head(25), recent_cols, height=480)
+
+
+# =============================================================================
+# Santé du pipeline
+# =============================================================================
+
+elif page == "Santé du pipeline":
+    render_page_header(
+        "Opérations",
+        "Santé du pipeline",
+        "Fraîcheur des collectes, état des refresh analytiques et signaux d'anomalie sur les derniers snapshots.",
+    )
+
+    if not using_supabase():
+        render_status(
+            "Le monitoring opérationnel nécessite Supabase, car il s'appuie sur collection_runs et app_refresh_state.",
+            "warning",
+        )
+    elif pipeline_health.empty:
+        render_status("Aucune information de santé du pipeline n'est disponible.", "danger")
+    else:
+        health_row = pipeline_health.iloc[0]
+        assessment = assess_pipeline_health(health_row)
+
+        overall_labels = {
+            "good": "Pipeline sain",
+            "warning": "À surveiller",
+            "critical": "Intervention requise",
+        }
+        overall_levels = {
+            "good": "good",
+            "warning": "warning",
+            "critical": "danger",
+        }
+        render_status(
+            overall_labels.get(assessment["overall_status"], "État inconnu"),
+            overall_levels.get(assessment["overall_status"], "warning"),
+        )
+
+        def _format_age(minutes):
+            if minutes is None or pd.isna(minutes):
+                return "N/D"
+            if minutes < 120:
+                return f"{minutes:.0f} min"
+            return f"{minutes / 60:.1f} h"
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Dernière collecte", _format_age(assessment["collection_age_minutes"]))
+        k2.metric("Refresh incrémental", _format_age(assessment["analytics_age_minutes"]))
+        k3.metric("Refresh lourd", _format_age(assessment["heavy_age_minutes"]))
+        k4.metric("Pannes du snapshot", format_int(health_row.get("latest_success_outage_count", 0)))
+
+        s1, s2, s3, s4 = st.columns(4)
+        s1.metric("Runs réussis · 24 h", format_int(health_row.get("success_runs_24h", 0)))
+        s2.metric("Runs en erreur · 24 h", format_int(health_row.get("error_runs_24h", 0)))
+        s3.metric("Pannes actives", format_int(health_row.get("active_outages_count", 0)))
+        s4.metric("Clients affectés", format_int(health_row.get("active_customers_affected", 0)))
+
+        render_section_header("Derniers événements", "Horodatages Québec")
+        event_rows = pd.DataFrame([
+            {
+                "Événement": "Dernier snapshot réussi",
+                "Moment": format_quebec_datetime(health_row.get("latest_success_captured_at")),
+                "Identifiant": health_row.get("latest_success_snapshot_id") or "N/D",
+            },
+            {
+                "Événement": "Dernier refresh incrémental",
+                "Moment": format_quebec_datetime(health_row.get("incremental_refreshed_at")),
+                "Identifiant": "incremental_analytics",
+            },
+            {
+                "Événement": "Dernier refresh lourd",
+                "Moment": format_quebec_datetime(health_row.get("heavy_refreshed_at")),
+                "Identifiant": "heavy_analytics",
+            },
+        ])
+        st.dataframe(event_rows, width="stretch", hide_index=True)
+
+        change_pct = assessment.get("outage_change_pct")
+        if change_pct is not None:
+            direction = "hausse" if change_pct >= 0 else "baisse"
+            st.caption(
+                f"Variation entre les deux derniers snapshots réussis : {abs(change_pct):.1f} % ({direction})."
+            )
+
+        render_section_header("Alertes opérationnelles", "Seuils automatiques")
+        alerts = assessment["alerts"]
+        if not alerts:
+            render_status("Aucune alerte opérationnelle détectée.", "good")
+        else:
+            for alert in alerts:
+                level = "danger" if alert.level == "critical" else "warning"
+                render_status(alert.message, level)
+
+        with st.expander("Seuils utilisés"):
+            st.markdown(
+                "- Collecte : avertissement après **75 min**, critique après **120 min**.\n"
+                "- Refresh incrémental : avertissement après **75 min**, critique après **120 min**.\n"
+                "- Refresh lourd : avertissement après **30 h**, critique après **48 h**.\n"
+                "- Chute du nombre de pannes : avertissement à **-80 %** lorsque le snapshot précédent comptait au moins 20 pannes.\n"
+                "- Hausse : avertissement à **+300 %** avec au moins 50 pannes supplémentaires."
+            )
 
 
 # =============================================================================

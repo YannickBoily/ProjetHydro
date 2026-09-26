@@ -110,6 +110,8 @@ DAILY_CACHE_TTL_SECONDS = 21600
 
 QUALITY_CACHE_TTL_SECONDS = 21600
 
+PIPELINE_HEALTH_CACHE_TTL_SECONDS = 300
+
 DEFAULT_HISTORY_DAYS = 90
 
 DEFAULT_HISTORY_ROWS_LIMIT = 10_000
@@ -124,6 +126,13 @@ TIMESTAMP_COLUMNS = (
     "last_capture_at",
     "known_cause_last_seen_at",
     "created_at",
+    "observed_at",
+    "latest_success_captured_at",
+    "last_run_captured_at",
+    "last_run_finished_at",
+    "incremental_refreshed_at",
+    "heavy_refreshed_at",
+    "latest_table_capture_at",
 )
 
 NUMERIC_COLUMNS = (

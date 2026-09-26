@@ -30,6 +30,7 @@ flowchart LR
 5. `scripts/refresh_supabase_analytics.py` met à jour de façon incrémentale les tables utilisées par l'application. Les pannes actives correspondent exactement au **dernier snapshot réussi**, sans fenêtre temporelle approximative.
 6. `dashboard/streamlit_app.py` orchestre l'interface Streamlit; la configuration, l'accès aux données, les helpers et les composants visuels sont séparés dans `dashboard/config.py`, `dashboard/data_access.py`, `dashboard/view_helpers.py` et `dashboard/components.py`.
 7. `.github/workflows/hydro_maintenance.yml` effectue une maintenance hebdomadaire et force la réconciliation des analyses plus coûteuses.
+8. `scripts/check_pipeline_health.py` contrôle la fraîcheur du pipeline après les traitements, publie un résumé dans GitHub Actions et fait échouer le workflow uniquement lorsqu'un signal critique est détecté.
 
 ## Tables principales
 
@@ -42,6 +43,7 @@ flowchart LR
 | `app_active_outages` | Pannes considérées actives au dernier snapshot |
 | `app_daily_summary` | Agrégations quotidiennes utilisées pour les tendances |
 | `app_data_quality_report` | Contrôles et indicateurs de qualité des données |
+| `app_refresh_state` | Horodatages des refresh analytiques incrémentaux et lourds |
 
 Les tables `app_latest_outages` et `app_active_outages` sont maintenues de façon incrémentale afin d'éviter de retraiter l'ensemble de l'historique à chaque collecte. Les analyses plus lourdes, notamment les agrégations quotidiennes et le rapport de qualité, sont rafraîchies périodiquement et peuvent être reconstruites lors de la maintenance. Les requêtes PostgreSQL du refresh sont versionnées séparément dans `sql/postgres/`; `scripts/refresh_supabase_analytics.py` reste un orchestrateur Python léger.
 
@@ -99,9 +101,26 @@ Le dashboard Streamlit permet notamment de consulter :
 - les cartes par municipalité, MRC et région ;
 - l'évolution temporelle des pannes et des clients affectés ;
 - la distribution des causes ;
-- les indicateurs de qualité des données.
+- les indicateurs de qualité des données ;
+- une page **Santé du pipeline** avec la fraîcheur des collectes, les refresh analytiques, les erreurs sur 24 h et les anomalies de volume.
 
 En production, le dashboard lit les données dans Supabase/PostgreSQL. Pour le développement local, il peut également utiliser les exports CSV générés à partir du warehouse DuckDB.
+
+
+## Monitoring opérationnel
+
+La page **Santé du pipeline** s'appuie sur `collection_runs`, `app_refresh_state`, `app_active_outages` et `app_latest_outages`. Elle affiche notamment :
+
+- l'âge de la dernière collecte réussie ;
+- l'âge du dernier refresh incrémental ;
+- l'âge du dernier refresh analytique lourd ;
+- les runs réussis et en erreur sur les dernières 24 heures ;
+- le nombre de pannes et de clients affectés dans le snapshot actif ;
+- les variations anormales entre les deux derniers snapshots réussis.
+
+Les seuils par défaut sont volontairement simples : collecte et refresh incrémental en avertissement après **75 minutes** et critiques après **120 minutes** ; refresh lourd en avertissement après **30 heures** et critique après **48 heures**. Une chute brutale du volume de pannes génère un avertissement mais ne transforme jamais un snapshot valide à 0 panne en erreur de collecte.
+
+Les workflows de production utilisent le même groupe `concurrency` afin d'éviter que la maintenance et la collecte horaire modifient simultanément les tables analytiques. Ils définissent également des permissions minimales, un timeout et un contrôle de santé final.
 
 ## Workflow local avec DuckDB
 
@@ -166,6 +185,7 @@ ProjetHydro/
 │   ├── time_utils.py               # Conventions UTC / America/Toronto
 │   ├── sync_to_supabase.py         # Synchronisation PostgreSQL
 │   ├── refresh_supabase_analytics.py
+│   ├── check_pipeline_health.py    # Contrôle opérationnel après chaque run
 │   ├── build_warehouse.py          # Workflow DuckDB local
 │   ├── export_tables.py
 │   └── build_municipality_reference_geo.py
@@ -199,6 +219,8 @@ Le pipeline comprend plusieurs mécanismes destinés à rendre les traitements p
 - index PostgreSQL pour les accès fréquents ;
 - rapport de qualité des données ;
 - maintenance périodique pour réconcilier les tables analytiques ;
+- monitoring opérationnel avec fraîcheur des collectes/refresh, détection de variations anormales et résumé GitHub Actions ;
+- workflows sérialisés par `concurrency`, permissions minimales et timeouts explicites ;
 - CI GitHub Actions exécutant la compilation Python et `pytest` sur les pushes et pull requests ;
 - dépendances Python verrouillées par usage (`runtime`, `dev`, `geo`) pour rendre les builds reproductibles ;
 - parité des principales conventions analytiques DuckDB/PostgreSQL (durées décimales, date Québec, regroupement des captures).

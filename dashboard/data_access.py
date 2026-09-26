@@ -18,6 +18,7 @@ from dashboard.config import (
     DEFAULT_HISTORY_ROWS_LIMIT,
     NUMERIC_COLUMNS,
     QUALITY_CACHE_TTL_SECONDS,
+    PIPELINE_HEALTH_CACHE_TTL_SECONDS,
     QUEBEC_TIMEZONE,
     RECENT_CACHE_TTL_SECONDS,
     TIMESTAMP_COLUMNS,
@@ -314,3 +315,30 @@ def load_supabase_quality_report() -> pd.DataFrame:
     """
 
     return load_supabase_query(query)
+
+
+@st.cache_data(show_spinner=False, ttl=PIPELINE_HEALTH_CACHE_TTL_SECONDS)
+def load_supabase_pipeline_health() -> pd.DataFrame:
+    """Charger un instantané léger de la santé opérationnelle du pipeline."""
+    sql_path = Path(__file__).resolve().parents[1] / "sql" / "postgres" / "pipeline_health_snapshot.sql"
+    if not sql_path.exists():
+        raise FileNotFoundError(f"SQL file not found: {sql_path}")
+    return load_supabase_query(sql_path.read_text(encoding="utf-8"))
+
+
+def clear_dashboard_caches() -> None:
+    """Vider tous les caches de données du dashboard pour la source active."""
+    if using_supabase():
+        for loader in (
+            load_supabase_active,
+            load_supabase_latest,
+            load_supabase_recent_outages,
+            load_supabase_latest_metrics,
+            load_supabase_history,
+            load_supabase_daily_summary,
+            load_supabase_quality_report,
+            load_supabase_pipeline_health,
+        ):
+            loader.clear()
+    else:
+        load_csv.clear()

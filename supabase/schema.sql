@@ -164,6 +164,18 @@ ON collection_runs (captured_at DESC)
 WHERE status = 'success';
 
 
+
+
+-- Analytical refresh timestamps used by the operational health page.
+CREATE TABLE IF NOT EXISTS app_refresh_state (
+    refresh_group TEXT PRIMARY KEY,
+    last_refreshed_at TIMESTAMPTZ NOT NULL
+);
+
+ALTER TABLE app_refresh_state ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE app_refresh_state FROM anon, authenticated;
+
+
 CREATE TABLE IF NOT EXISTS dim_municipalities (
     municipality_id INTEGER PRIMARY KEY,
     municipality_label TEXT,

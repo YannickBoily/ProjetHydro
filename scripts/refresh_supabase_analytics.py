@@ -118,6 +118,15 @@ def mark_heavy_refresh_complete(connection) -> None:
     print("Heavy analytics refresh timestamp updated.")
 
 
+def mark_incremental_refresh_complete(connection) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            load_sql("mark_incremental_refresh_complete.sql")
+        )
+
+    connection.commit()
+    print("Incremental analytics refresh timestamp updated.")
+
 
 def force_latest_rebuild() -> bool:
     value = os.environ.get(
@@ -266,6 +275,7 @@ def main() -> None:
             bootstrap=bootstrap,
         )
         refresh_active_outages(connection)
+        mark_incremental_refresh_complete(connection)
 
         if heavy_refresh_is_due(connection):
             execute_step(
