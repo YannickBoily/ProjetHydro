@@ -81,9 +81,9 @@ SELECT
     s.last_capture_at,
     s.capture_count,
 
-    DATE_DIFF('hour', s.first_capture_at, s.last_capture_at) AS observed_duration_hours,
-    DATE_DIFF('hour', r.start_time, r.captured_at) AS outage_age_hours_at_latest_capture,
-    DATE_DIFF('hour', r.captured_at, r.estimated_restore) AS restore_eta_hours_at_latest_capture,
+    DATE_DIFF('second', s.first_capture_at, s.last_capture_at) / 3600.0 AS observed_duration_hours,
+    DATE_DIFF('second', r.start_time, r.captured_at) / 3600.0 AS outage_age_hours_at_latest_capture,
+    DATE_DIFF('second', r.captured_at, r.estimated_restore) / 3600.0 AS restore_eta_hours_at_latest_capture,
 
     r.lon,
     r.lat,

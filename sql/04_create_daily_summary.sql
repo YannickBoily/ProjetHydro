@@ -1,7 +1,7 @@
 CREATE OR REPLACE TABLE daily_summary AS
 WITH capture_summary AS (
     SELECT
-        captured_at,
+        DATE_TRUNC('minute', captured_at) AS capture_batch_minute,
         CAST(timezone('America/Toronto', captured_at) AS DATE) AS capture_date,
         COUNT(DISTINCT outage_id) AS active_outages_estimate,
         SUM(customers_affected) AS customers_affected_snapshot,
@@ -14,7 +14,7 @@ WITH capture_summary AS (
         ) AS major_outages_snapshot
     FROM raw_outage_snapshots
     WHERE captured_at IS NOT NULL
-    GROUP BY captured_at
+    GROUP BY capture_batch_minute, capture_date
 ),
 
 daily_from_snapshots AS (
