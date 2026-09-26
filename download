@@ -1,0 +1,29 @@
+__pycache__/
+*.pyc
+data/warehouse/*.duckdb
+data/geo/
+data/reference/
+
+# Historique brut local seulement
+data/raw/hydroquebec_history.csv
+data/raw/current_snapshot.csv
+data/raw/current_snapshot_meta.json
+
+# Warehouse généré
+data/warehouse/*.duckdb
+
+# Données géospatiales sources lourdes
+data/geo/
+
+# Secrets locaux Streamlit
+.streamlit/secrets.toml
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Archives brutes générées (sauvegardées comme artifacts GitHub Actions)
+data/raw/archive/
+
+# Pytest cache
+.pytest_cache/

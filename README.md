@@ -28,7 +28,7 @@ flowchart LR
 3. `scripts/archive_snapshot.py` compresse le snapshot, calcule ses checksums SHA-256 et `.github/workflows/hydro.yml` le conserve comme **artifact GitHub Actions pendant 30 jours avant toute tentative de synchro Supabase**.
 4. `scripts/sync_to_supabase.py` synchronise le snapshot vers `raw_outage_snapshots` et journalise son état dans `collection_runs`. La migration des anciennes observations vers des identifiants `legacy:*` est automatique et idempotente.
 5. `scripts/refresh_supabase_analytics.py` met à jour de façon incrémentale les tables utilisées par l'application. Les pannes actives correspondent exactement au **dernier snapshot réussi**, sans fenêtre temporelle approximative.
-6. `dashboard/streamlit_app.py` interroge directement les tables PostgreSQL lorsque la connexion Supabase est configurée.
+6. `dashboard/streamlit_app.py` orchestre l'interface Streamlit; la configuration, l'accès aux données, les helpers et les composants visuels sont séparés dans `dashboard/config.py`, `dashboard/data_access.py`, `dashboard/view_helpers.py` et `dashboard/components.py`.
 7. `.github/workflows/hydro_maintenance.yml` effectue une maintenance hebdomadaire et force la réconciliation des analyses plus coûteuses.
 
 ## Tables principales
@@ -43,7 +43,7 @@ flowchart LR
 | `app_daily_summary` | Agrégations quotidiennes utilisées pour les tendances |
 | `app_data_quality_report` | Contrôles et indicateurs de qualité des données |
 
-Les tables `app_latest_outages` et `app_active_outages` sont maintenues de façon incrémentale afin d'éviter de retraiter l'ensemble de l'historique à chaque collecte. Les analyses plus lourdes, notamment les agrégations quotidiennes et le rapport de qualité, sont rafraîchies périodiquement et peuvent être reconstruites lors de la maintenance.
+Les tables `app_latest_outages` et `app_active_outages` sont maintenues de façon incrémentale afin d'éviter de retraiter l'ensemble de l'historique à chaque collecte. Les analyses plus lourdes, notamment les agrégations quotidiennes et le rapport de qualité, sont rafraîchies périodiquement et peuvent être reconstruites lors de la maintenance. Les requêtes PostgreSQL du refresh sont versionnées séparément dans `sql/postgres/`; `scripts/refresh_supabase_analytics.py` reste un orchestrateur Python léger.
 
 ## Convention des fuseaux horaires
 
@@ -105,11 +105,17 @@ En production, le dashboard lit les données dans Supabase/PostgreSQL. Pour le d
 
 ## Workflow local avec DuckDB
 
-DuckDB reste disponible comme environnement analytique local et reproductible.
+DuckDB reste disponible comme environnement analytique local et reproductible. Les calculs de durée, les dates civiles du Québec et le regroupement des snapshots utilisent les mêmes conventions analytiques que PostgreSQL.
 
 ```bash
-# Installer les dépendances
+# Installer les dépendances runtime/pipeline verrouillées
 python -m pip install -r requirements.txt
+
+# Pour exécuter les tests
+python -m pip install -r requirements-dev.txt
+
+# Pour reconstruire le référentiel géospatial
+python -m pip install -r requirements-geo.txt
 
 # Collecter un snapshot et l'ajouter à l'historique CSV local
 HYDRO_WRITE_LOCAL_HISTORY=1 python scripts/fetch_outages.py
@@ -148,7 +154,11 @@ Le dashboard peut aussi recevoir ces valeurs via les secrets Streamlit. Les iden
 ProjetHydro/
 ├── .github/workflows/              # CI, automatisation horaire et maintenance
 ├── dashboard/
-│   └── streamlit_app.py            # Application Streamlit
+│   ├── streamlit_app.py            # Orchestration des pages Streamlit
+│   ├── config.py                   # Constantes et configuration UI
+│   ├── data_access.py              # CSV + Supabase/PostgreSQL
+│   ├── view_helpers.py             # Normalisation et formatage
+│   └── components.py               # Graphiques, cartes et composants UI
 ├── scripts/
 │   ├── fetch_outages.py            # Collecte, retries HTTP et normalisation
 │   ├── archive_snapshot.py         # Archive brute + checksums
@@ -159,10 +169,14 @@ ProjetHydro/
 │   ├── build_warehouse.py          # Workflow DuckDB local
 │   ├── export_tables.py
 │   └── build_municipality_reference_geo.py
-├── sql/                            # Transformations du warehouse DuckDB
+├── sql/
+│   ├── *.sql                       # Transformations du warehouse DuckDB
+│   └── postgres/                   # Requêtes du refresh Supabase/PostgreSQL
 ├── supabase/                       # Schéma et optimisation PostgreSQL
-├── tests/                          # Tests automatisés
-└── requirements.txt
+├── tests/                          # Tests automatisés et parité analytique
+├── requirements.txt                # Dépendances runtime/pipeline verrouillées
+├── requirements-dev.txt            # Dépendances de test verrouillées
+└── requirements-geo.txt            # Dépendances géospatiales verrouillées
 ```
 
 ## Technologies
@@ -185,7 +199,9 @@ Le pipeline comprend plusieurs mécanismes destinés à rendre les traitements p
 - index PostgreSQL pour les accès fréquents ;
 - rapport de qualité des données ;
 - maintenance périodique pour réconcilier les tables analytiques ;
-- CI GitHub Actions exécutant la compilation Python et `pytest` sur les pushes et pull requests.
+- CI GitHub Actions exécutant la compilation Python et `pytest` sur les pushes et pull requests ;
+- dépendances Python verrouillées par usage (`runtime`, `dev`, `geo`) pour rendre les builds reproductibles ;
+- parité des principales conventions analytiques DuckDB/PostgreSQL (durées décimales, date Québec, regroupement des captures).
 
 ## Licence et source des données
 
