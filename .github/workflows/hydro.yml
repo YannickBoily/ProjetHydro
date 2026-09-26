@@ -5,9 +5,17 @@ on:
     - cron: "0 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: hydro-production
+  cancel-in-progress: false
+
 jobs:
   update_outages:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repo
@@ -17,6 +25,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
       - name: Install dependencies
         run: |
@@ -58,3 +67,9 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SUPABASE_DB_HOSTADDR: ${{ secrets.SUPABASE_DB_HOSTADDR }}
         run: python scripts/refresh_supabase_analytics.py
+
+      - name: Check pipeline health
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_DB_HOSTADDR: ${{ secrets.SUPABASE_DB_HOSTADDR }}
+        run: python scripts/check_pipeline_health.py
