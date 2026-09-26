@@ -83,9 +83,8 @@ def test_archive_snapshot_creates_gzip_and_checksum_manifest(tmp_path: Path):
 def test_postgres_schema_migrates_timestamps_with_correct_semantics():
     schema = (ROOT / "supabase" / "schema.sql").read_text(encoding="utf-8")
     sync = (ROOT / "scripts" / "sync_to_supabase.py").read_text(encoding="utf-8")
-    analytics = (ROOT / "scripts" / "refresh_supabase_analytics.py").read_text(
-        encoding="utf-8"
-    )
+    analytics = (ROOT / "scripts" / "refresh_supabase_analytics.py").read_text(encoding="utf-8")
+    daily_sql = (ROOT / "sql" / "postgres" / "refresh_daily_summary.sql").read_text(encoding="utf-8")
 
     for text in (schema, sync):
         assert "captured_at TYPE TIMESTAMPTZ" in text
@@ -94,7 +93,7 @@ def test_postgres_schema_migrates_timestamps_with_correct_semantics():
         assert "start_time AT TIME ZONE 'America/Toronto'" in text
         assert "estimated_restore AT TIME ZONE 'America/Toronto'" in text
 
-    assert "(r.captured_at AT TIME ZONE 'America/Toronto')::date" in analytics
+    assert "(r.captured_at AT TIME ZONE 'America/Toronto')::date" in daily_sql
     assert "timezone_migrated" in analytics
 
 
@@ -209,3 +208,50 @@ def test_restore_rejects_corrupted_archive(tmp_path: Path):
             tmp_path / "restored.csv",
             tmp_path / "restored_meta.json",
         )
+
+
+def test_timezone_migration_preserves_dependent_views_in_dependency_order():
+    from scripts import sync_to_supabase
+
+    class RecordingCursor:
+        def __init__(self):
+            self.statements = []
+
+        def execute(self, statement, params=None):
+            self.statements.append((statement, params))
+
+    definitions = {
+        "vw_supabase_load_summary": "SELECT 1 AS total_rows",
+        "vw_latest_outages": "SELECT 2 AS outage_id",
+        "vw_active_outages": "SELECT * FROM vw_latest_outages",
+    }
+    cursor = RecordingCursor()
+
+    sync_to_supabase.drop_timezone_migration_views(cursor, definitions)
+    drop_sql = [statement for statement, _ in cursor.statements]
+    assert drop_sql == [
+        'DROP VIEW IF EXISTS "vw_active_outages";',
+        'DROP VIEW IF EXISTS "vw_latest_outages";',
+        'DROP VIEW IF EXISTS "vw_supabase_load_summary";',
+    ]
+
+    cursor.statements.clear()
+    sync_to_supabase.restore_timezone_migration_views(cursor, definitions)
+    create_sql = [statement for statement, _ in cursor.statements]
+    assert create_sql[0].startswith('CREATE VIEW "vw_supabase_load_summary" AS ')
+    assert create_sql[1].startswith('CREATE VIEW "vw_latest_outages" AS ')
+    assert create_sql[2].startswith('CREATE VIEW "vw_active_outages" AS ')
+
+
+def test_timezone_migration_schema_drops_views_before_altering_types():
+    schema = (ROOT / "supabase" / "schema.sql").read_text(encoding="utf-8")
+    sync = (ROOT / "scripts" / "sync_to_supabase.py").read_text(encoding="utf-8")
+
+    drop_pos = schema.index("DROP VIEW IF EXISTS vw_active_outages")
+    alter_pos = schema.index("ALTER COLUMN captured_at TYPE TIMESTAMPTZ")
+    recreate_pos = schema.index("CREATE OR REPLACE VIEW vw_supabase_load_summary")
+
+    assert drop_pos < alter_pos < recreate_pos
+    assert "pg_get_viewdef" in sync
+    assert "drop_timezone_migration_views" in sync
+    assert "restore_timezone_migration_views" in sync
