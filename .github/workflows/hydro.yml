@@ -35,8 +35,6 @@ jobs:
 
       - name: Fetch current outage snapshot
         env:
-          # Supabase is the production history store. Avoid rewriting the
-          # complete local CSV on every hourly GitHub Actions run.
           HYDRO_WRITE_LOCAL_HISTORY: "0"
         run: python scripts/fetch_outages.py
 
