@@ -235,13 +235,160 @@ def _build_public_table(predicted: pd.DataFrame) -> pd.DataFrame:
     return table.drop(columns=["__sort_customers", "__sort_ml"]).reset_index(drop=True)
 
 
+
+
+def _text_value(value, fallback: str) -> str:
+    if value is None or pd.isna(value):
+        return fallback
+    text = str(value).strip()
+    return text if text else fallback
+
+
+def _outage_option_label(row: pd.Series) -> str:
+    municipality = _text_value(row.get("municipality_label"), "Municipalité inconnue")
+    cause = _text_value(row.get("analysis_cause_label_fr"), "Cause inconnue")
+    customers = pd.to_numeric(pd.Series([row.get("customers_affected")]), errors="coerce").iloc[0]
+    age = pd.to_numeric(pd.Series([row.get("outage_age_hours_at_capture")]), errors="coerce").iloc[0]
+    customer_text = f"{int(customers):,} clients".replace(",", " ") if pd.notna(customers) else "impact inconnu"
+    age_text = _format_duration(age)
+    outage_id = _text_value(row.get("outage_id"), "")
+    suffix = outage_id[-6:]
+    return f"{municipality} · {customer_text} · {age_text} · {cause}" + (f" · #{suffix}" if suffix else "")
+
+
+def _render_selected_outage(predicted: pd.DataFrame) -> None:
+    if predicted is None or predicted.empty or "outage_id" not in predicted.columns:
+        st.info("Aucune panne active à sélectionner selon les filtres actuels.")
+        return
+
+    work = predicted.copy()
+    work["outage_id"] = work["outage_id"].astype(str)
+    work["__customers"] = pd.to_numeric(work.get("customers_affected"), errors="coerce").fillna(-1)
+    work = work.sort_values("__customers", ascending=False)
+    labels = {row["outage_id"]: _outage_option_label(row) for _, row in work.iterrows()}
+    options = work["outage_id"].tolist()
+
+    selected_id = st.selectbox(
+        "Choisir une panne active",
+        options,
+        format_func=lambda outage_id: labels.get(outage_id, outage_id),
+        key="ml_selected_outage_id",
+        help="Les pannes sont classées par nombre de clients affectés. Les filtres du dashboard s'appliquent aussi ici.",
+    )
+    row = work.loc[work["outage_id"] == selected_id].iloc[0]
+
+    municipality = _text_value(row.get("municipality_label"), "Municipalité inconnue")
+    region = _text_value(row.get("region_name"), "Région inconnue")
+    cause = _text_value(row.get("analysis_cause_label_fr"), "Cause inconnue")
+    customers = pd.to_numeric(pd.Series([row.get("customers_affected")]), errors="coerce").iloc[0]
+    age = pd.to_numeric(pd.Series([row.get("outage_age_hours_at_capture")]), errors="coerce").iloc[0]
+    hydro_eta = _format_local_time(row.get("latest_estimated_restore"))
+    ml_eta = _format_local_time(row.get("live_predicted_restore_time"))
+    remaining = _format_duration(row.get("live_predicted_remaining_hours"))
+    gap = _format_gap_minutes(row.get("live_vs_hydro_minutes"))
+    live_available = bool(row.get("live_prediction_available")) if pd.notna(row.get("live_prediction_available")) else False
+
+    st.markdown(f"### {html.escape(municipality)}")
+    st.caption(
+        f"{html.escape(region)} · {html.escape(cause)} · "
+        f"{format_int(customers) if pd.notna(customers) else 'n/a'} clients affectés · active depuis {_format_duration(age)}"
+    )
+
+    c1, c2, c3 = st.columns([1, 1, 1], gap="medium")
+    with c1:
+        st.metric("Estimation officielle Hydro", hydro_eta)
+        st.caption("Dernière heure de rétablissement observée dans les snapshots.")
+    with c2:
+        st.metric("Estimation ML live", ml_eta if live_available else "Pas encore disponible")
+        st.caption("Réestimation du temps restant avec l'information déjà connue.")
+    with c3:
+        st.metric("Écart ML vs Hydro", gap if live_available else "—")
+        st.caption("Indique si le ML prévoit un rétablissement plus tôt ou plus tard.")
+
+    if live_available:
+        st.markdown(
+            f"**Lecture rapide :** le modèle estime encore **{remaining}** avant le rétablissement, "
+            f"soit **{gap}** que la dernière estimation Hydro observée."
+        )
+        p1, p2, p3, p4 = st.columns(4)
+        for widget, threshold in zip((p1, p2, p3, p4), (1, 2, 4, 8)):
+            value = pd.to_numeric(
+                pd.Series([row.get(f"live_probability_remaining_over_{threshold}h")]),
+                errors="coerce",
+            ).iloc[0]
+            widget.metric(
+                f"Encore > {threshold} h",
+                format_pct(value * 100.0) if pd.notna(value) else "n/a",
+                help=f"Probabilité estimée par le modèle que cette panne soit encore active dans plus de {threshold} heure(s).",
+            )
+    else:
+        st.info(
+            "Le modèle live n'est pas encore disponible pour cette panne. Cela arrive notamment lorsqu'aucune ETA Hydro "
+            "n'a encore été observée dans l'épisode courant. Les estimations initiales restent disponibles ci-dessous."
+        )
+
+    with st.expander("Voir comment l'estimation a évolué depuis le début de la panne", expanded=False):
+        first_eta = _format_local_time(row.get("first_hydro_eta"))
+        initial_no_eta = _format_local_time(row.get("initial_no_eta_predicted_restore_time"))
+        initial_first_eta = _format_local_time(row.get("initial_first_eta_predicted_restore_time"))
+        e1, e2, e3, e4 = st.columns(4)
+        e1.metric("ML au départ · sans ETA", initial_no_eta)
+        e2.metric("Première ETA Hydro", first_eta)
+        e3.metric("ML au départ · + ETA", initial_first_eta)
+        e4.metric("ML live maintenant", ml_eta if live_available else "—")
+        st.caption(
+            "Ces valeurs correspondent à des moments différents : les deux estimations initiales sont figées au début de la panne, "
+            "alors que le ML live est recalculé avec les snapshots disponibles jusqu'à maintenant."
+        )
+
+
+def render_ml_overview_teaser() -> None:
+    """Show the value of the ML work on the overview without running live inference."""
+    status = production_model_status()
+    if not status.get("available"):
+        return
+    metadata = status.get("metadata") or {}
+    live_hq = _nested(metadata, "benchmarks", "live_hydro_latest_eta", "episode_weighted", default={}) or {}
+    model_mae = live_hq.get("model_mae_hours")
+    hydro_mae = live_hq.get("hydro_mae_hours")
+    reduction = live_hq.get("mae_reduction_percent")
+    closer = live_hq.get("model_closer_rate")
+
+    with st.container(border=True):
+        top, action = st.columns([3.2, 1], gap="large")
+        with top:
+            st.markdown("### 🤖 Prévisions ML de rétablissement")
+            st.caption(
+                "Une couche ML complète les estimations officielles en recalculant le temps restant à partir des snapshots déjà observés."
+            )
+        with action:
+            def _open_ml_page():
+                st.session_state["navigation_page"] = "Prévisions ML"
+            st.button(
+                "Voir les prévisions →",
+                key="overview_open_ml",
+                width="stretch",
+                on_click=_open_ml_page,
+            )
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Erreur moyenne ML live", _metric_hours(model_mae))
+        m2.metric(
+            "Réduction d'erreur vs Hydro",
+            format_pct(float(reduction)) if reduction is not None else "n/a",
+        )
+        m3.metric("ML plus proche", _pct_rate(closer))
+        st.caption(
+            "Résultats du test temporel de la release de production. La page d'accueil ne lance aucune inférence ML : "
+            "les prédictions individuelles sont calculées seulement dans la page Prévisions ML."
+        )
+
 def render_ml_page(filtered: pd.DataFrame, *, ml_history: pd.DataFrame | None = None) -> None:
     """Render current inference from a promoted three-model release."""
     render_page_header(
         "Machine learning",
         "Prévisions de rétablissement assistées par ML",
-        "Cette page compare les estimations d'Hydro-Québec à celles de nos modèles afin d'estimer plus précisément "
-        "l'heure de rétablissement pendant une panne active.",
+        "Choisissez une panne active pour comparer rapidement l'estimation officielle d'Hydro-Québec et la réestimation du modèle live.",
     )
 
     status = production_model_status()
@@ -251,13 +398,8 @@ def render_ml_page(filtered: pd.DataFrame, *, ml_history: pd.DataFrame | None = 
             "un nouveau candidat d'entraînement."
         )
         st.code(
-            "python scripts/promote_three_model_release.py "
-            "ml/releases/aft-3model-20261015-c783b769",
+            "python scripts/promote_three_model_release.py ml/releases/aft-3model-20261015-c783b769",
             language="powershell",
-        )
-        st.caption(
-            "Après la promotion, commit/push le dossier ml/artifacts/three_model_production pour que Streamlit Cloud "
-            "dispose des modèles."
         )
         return
 
@@ -298,51 +440,28 @@ def render_ml_page(filtered: pd.DataFrame, *, ml_history: pd.DataFrame | None = 
     _render_takeaway_card(model_live_mae, hydro_live_mae, reduction)
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Pannes actives suivies", format_int(len(predicted)), help="Pannes présentes dans le dernier état chargé.")
-    k2.metric(
-        "Avec estimation ML live",
-        format_int(live_count),
-        help="Le modèle live devient disponible lorsqu'une ETA Hydro a déjà été observée dans l'épisode courant.",
-    )
-    k3.metric(
-        "Erreur moyenne du ML live",
-        _metric_hours(model_live_mae),
-        help="MAE episode-weighted sur le test temporel de la release.",
-    )
+    k1.metric("Pannes actives suivies", format_int(len(predicted)))
+    k2.metric("Avec estimation ML live", format_int(live_count))
+    k3.metric("Erreur moyenne du ML live", _metric_hours(model_live_mae))
     k4.metric(
         "Amélioration vs Hydro-Québec",
         format_pct(float(reduction)) if reduction is not None else "n/a",
-        help="Réduction de l'erreur moyenne du ML live par rapport à la dernière ETA Hydro aux mêmes moments de test.",
     )
 
     if pd.notna(current_capture):
         st.caption(
-            "Données utilisées pour les prévisions actuelles : jusqu'au "
+            "Prévisions actuelles calculées avec les snapshots disponibles jusqu'au "
             f"**{current_capture.tz_convert(QUEBEC_TIMEZONE).strftime('%d %b %Y, %H:%M %Z')}**. "
-            "La collecte se fait par snapshots périodiques : il s'agit de près du temps réel, et non de temps réel à la seconde."
+            "La collecte étant périodique, il s'agit de près du temps réel."
         )
 
-    _render_how_it_works()
+    render_section_header("Consulter une panne", "Sélectionnez une panne active pour voir sa prévision en un coup d'œil")
+    _render_selected_outage(predicted)
 
-    render_section_header("Ce que montre la validation", "Deux comparaisons distinctes · plus bas = meilleur")
-    left, right = st.columns(2, gap="large")
-
-    with left:
-        st.markdown("### Au début de la panne")
-        st.caption("Erreur sur la durée totale prévue au premier snapshot.")
-        _render_comparison_chart(_initial_comparison_frame(metadata), height=310)
-
-    with right:
-        st.markdown("### Pendant la panne")
-        st.caption("Erreur sur le temps restant, aux mêmes moments pour Hydro et le modèle live.")
-        _render_comparison_chart(_live_comparison_frame(metadata), height=310)
-
-    render_section_header("Pannes actives", "Hydro-Québec et ML côte à côte")
+    render_section_header("Toutes les pannes actives", "Hydro-Québec et ML côte à côte")
     st.caption(
-        "Le tableau est volontairement simplifié. Une estimation « plus tôt » ou « plus tard » indique l'écart entre "
-        "le modèle live et la dernière ETA Hydro connue."
+        "L'écart est formulé en langage courant : « plus tôt » signifie que le ML prévoit un rétablissement avant la dernière ETA Hydro connue."
     )
-
     public_table = _build_public_table(predicted)
     if public_table.empty:
         st.info("Aucune panne active à afficher selon les filtres actuels.")
@@ -350,24 +469,22 @@ def render_ml_page(filtered: pd.DataFrame, *, ml_history: pd.DataFrame | None = 
         st.dataframe(
             public_table,
             width="stretch",
-            height=min(560, 76 + 35 * min(len(public_table), 14)),
+            height=min(525, 76 + 35 * min(len(public_table), 13)),
             hide_index=True,
         )
 
-    live_rows = predicted.loc[live_available].copy()
-    if not live_rows.empty:
-        render_section_header(
-            "Probabilité que les pannes durent encore",
-            "Moyenne des pannes qui disposent actuellement d'une estimation ML live",
-        )
-        p1, p2, p3, p4 = st.columns(4)
-        for widget, threshold in zip((p1, p2, p3, p4), (1, 2, 4, 8)):
-            col = f"live_probability_remaining_over_{threshold}h"
-            value = pd.to_numeric(live_rows.get(col), errors="coerce").mean()
-            widget.metric(
-                f"Encore > {threshold} h",
-                format_pct(value * 100) if pd.notna(value) else "n/a",
-            )
+    _render_how_it_works()
+
+    render_section_header("Comment le modèle a été validé", "Comparaisons sur une période de test gardée hors de l'entraînement")
+    left, right = st.columns(2, gap="large")
+    with left:
+        st.markdown("### Au début de la panne")
+        st.caption("Erreur sur la durée totale prévue au premier snapshot. Plus bas = meilleur.")
+        _render_comparison_chart(_initial_comparison_frame(metadata), height=310)
+    with right:
+        st.markdown("### Pendant la panne")
+        st.caption("Erreur sur le temps restant, aux mêmes moments pour Hydro et le ML. Plus bas = meilleur.")
+        _render_comparison_chart(_live_comparison_frame(metadata), height=310)
 
     no_eta_pair = _nested(
         metadata, "benchmarks", "initial_hydro_first_eta", "models", "initial_no_eta", default={}
@@ -380,13 +497,13 @@ def render_ml_page(filtered: pd.DataFrame, *, ml_history: pd.DataFrame | None = 
     render_section_header("À retenir", "Les principaux résultats de la release")
     t1, t2, t3 = st.columns(3, gap="medium")
     with t1:
-        st.markdown("#### L'ETA Hydro est utile")
+        st.markdown("#### L'ETA Hydro apporte une information utile")
         st.caption(
-            f"Au premier snapshot, le modèle sans ETA obtient {_metric_hours(no_eta_pair.get('midpoint_mae_hours'))}. "
-            f"En ajoutant la première ETA Hydro, l'erreur passe à {_metric_hours(first_eta_pair.get('midpoint_mae_hours'))}."
+            f"Au départ, le ML sans ETA obtient {_metric_hours(no_eta_pair.get('midpoint_mae_hours'))}. "
+            f"Avec la première ETA Hydro, l'erreur passe à {_metric_hours(first_eta_pair.get('midpoint_mae_hours'))}."
         )
     with t2:
-        st.markdown("#### Le modèle live apporte le plus")
+        st.markdown("#### Le ML live affine l'estimation")
         st.caption(
             f"Pendant la panne, l'erreur moyenne est de {_metric_hours(model_live_mae)} pour le ML live, "
             f"contre {_metric_hours(hydro_live_mae)} pour la dernière ETA Hydro aux mêmes moments."
@@ -415,7 +532,6 @@ def render_ml_page(filtered: pd.DataFrame, *, ml_history: pd.DataFrame | None = 
             """
         )
 
-        st.markdown("##### Tableau détaillé")
         display = predicted.copy()
         for col in (
             "live_probability_remaining_over_1h",
@@ -451,18 +567,13 @@ def render_ml_page(filtered: pd.DataFrame, *, ml_history: pd.DataFrame | None = 
 
         st.markdown(
             """
-            **Initial sans ETA.** Prédiction faite avec le premier snapshot du présent épisode sans utiliser
-            l'estimation Hydro-Québec. Elle mesure ce que les autres variables apportent à elles seules.
+            **Initial sans ETA.** Prédiction faite avec le premier snapshot du présent épisode sans utiliser l'estimation Hydro-Québec.
 
-            **Initial + première ETA.** Même moment de prédiction, mais l'ETA visible au premier snapshot est ajoutée
-            comme feature. Une révision publiée plus tard ne peut pas modifier cette prédiction initiale.
+            **Initial + première ETA.** La première ETA déjà connue est ajoutée comme variable; une révision future ne peut pas modifier cette prédiction initiale.
 
-            **Live + dernière ETA.** L'historique du présent épisode est reconstruit jusqu'au dernier snapshot connu.
-            Les ETA manquantes sont propagées seulement vers le futur à l'intérieur de l'épisode. Le modèle prédit le
-            **temps restant**, puis l'application le convertit en heure de rétablissement estimée.
+            **Live + dernière ETA.** Le modèle utilise uniquement l'historique déjà observé dans le présent épisode et prédit le temps restant.
 
-            Le modèle est entraîné hors ligne. Ouvrir Streamlit ne réentraîne rien : l'application charge la release
-            promue et exécute uniquement l'inférence XGBoost sur les valeurs actuellement présentes dans Supabase.
+            Le modèle est entraîné hors ligne. Ouvrir Streamlit ne réentraîne rien : l'application charge uniquement la release promue pour l'inférence.
             """
         )
 

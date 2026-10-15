@@ -44,7 +44,7 @@ from dashboard.data_access import (
     using_supabase,
 )
 from dashboard.pipeline_health import assess_pipeline_health
-from dashboard.ml_insights import render_ml_page
+from dashboard.ml_insights import render_ml_overview_teaser, render_ml_page
 from dashboard.view_helpers import (
     add_display_columns,
     bool_rate,
@@ -925,6 +925,8 @@ if page == "Vue d’ensemble":
     k2.metric("Clients affectés", format_int(customers_sum))
     k3.metric("Municipalités touchées", format_int(municipality_count))
     k4.metric("Pannes majeures", format_int(major_count), help=f"Seuil actuel : {format_int(major_threshold)} clients")
+
+    render_ml_overview_teaser()
 
     map_col, priority_col = st.columns([1.65, 0.85], gap="large")
     with map_col:
