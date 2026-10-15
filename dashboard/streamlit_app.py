@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import html
 import os
-import copy
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -52,13 +51,12 @@ from dashboard.view_helpers import (
     enrich_raw_history,
     format_int,
     format_pct,
-    format_quebec_datetime,
     get_cause_column,
     get_geo,
     latest_timestamp,
     make_download,
     prepare_quality_report,
-    show_table,
+    show_table as _show_table_raw,
 )
 from dashboard.components import (
     clean_chart_layout,
@@ -78,6 +76,24 @@ from dashboard.components import (
     unique_outage_count,
 )
 
+
+from dashboard.display_formatting import (
+    format_date_fr,
+    format_duration_hours,
+    format_duration_minutes,
+    format_quebec_datetime,
+    humanize_dataframe,
+)
+
+
+# Public presentation helpers -------------------------------------------------
+# The raw schema stays unchanged. These wrappers only transform what is shown
+# to visitors so technical field names, ISO timestamps and decimal-hour values
+# do not leak into the public interface.
+
+def show_table(df: pd.DataFrame, columns: list[str] | None = None, height: int | str = "auto") -> None:
+    """Display a table using public French labels and human-readable values."""
+    _show_table_raw(humanize_dataframe(df, columns), height=height)
 
 
 # =============================================================================
@@ -646,7 +662,7 @@ def active_filter_summary() -> str:
 DATA_SOURCE = "Supabase" if using_supabase() else "CSV"
 
 st.sidebar.markdown("## ⚡ Pannes Québec")
-st.sidebar.caption("Projet data · snapshots de pannes au Québec")
+st.sidebar.caption("Projet de données · suivi des pannes au Québec")
 
 PAGE_OPTIONS = [
     "Vue d’ensemble",
@@ -690,7 +706,7 @@ else:
 
 if active.empty:
     if using_supabase() or ACTIVE_FILE.exists():
-        st.info("Aucune panne active dans le dernier snapshot disponible.")
+        st.info("Aucune panne active dans le dernier relevé disponible.")
     else:
         st.error(
             "Les données de pannes actives sont manquantes ou indisponibles. "
@@ -873,7 +889,7 @@ st.markdown(
     <div class="app-header">
         <div>
             <div class="app-title">⚡ Suivi des pannes électriques</div>
-            <div class="app-subtitle">Québec · collecte par snapshots, analyse et qualité des données</div>
+            <div class="app-subtitle">Québec · collecte périodique, analyse et qualité des données</div>
         </div>
         <div class="app-meta">
             <span class="badge badge-accent">{html.escape(DATA_SOURCE)}</span>
@@ -896,9 +912,9 @@ st.markdown(
 
 if page == "Vue d’ensemble":
     render_page_header(
-        "Portfolio data",
+        "Projet de données",
         "Situation actuelle des pannes",
-        "Une vue synthétique construite à partir de snapshots publics : situation actuelle, "
+        "Une vue synthétique construite à partir de relevés publics : situation actuelle, "
         "concentration géographique et évolution récente.",
     )
 
@@ -952,14 +968,19 @@ if page == "Vue d’ensemble":
                 color_discrete_sequence=[ACCENT_COLOR],
                 labels={"date": "Date", "max_customers_affected": "Clients affectés"},
             )
-            fig.update_traces(line=dict(width=3), hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.0f} clients<extra></extra>")
+            trend["date_label"] = trend["date"].map(lambda value: format_date_fr(value, include_year=True))
+            fig.update_traces(
+                line=dict(width=3),
+                customdata=trend[["date_label"]].to_numpy(),
+                hovertemplate="%{customdata[0]}<br>%{y:,.0f} clients<extra></extra>",
+            )
             fig = clean_chart_layout(fig, height=335)
             st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
         else:
             st.info("L’historique quotidien n’est pas disponible.")
 
     with right:
-        render_section_header("Territoires les plus touchés", "Top 6 régions")
+        render_section_header("Territoires les plus touchés", "6 principales régions")
         if {"region_name", "customers_affected"}.issubset(filtered.columns) and not filtered.empty:
             region_summary = (
                 filtered.groupby("region_name", as_index=False)
@@ -973,11 +994,11 @@ if page == "Vue d’ensemble":
     with st.expander("Méthodologie et limites de la collecte", expanded=False):
         st.markdown(
             """
-            **Collecte.** Le jeu de données est construit à partir de snapshots successifs des pannes publiées par Hydro-Québec.
+            **Collecte.** Le jeu de données est construit à partir de relevés successifs des pannes publiées par Hydro-Québec.
 
             **Conséquence.** Certaines informations peuvent ne jamais être observées : une panne peut être rétablie entre deux captures, et une heure estimée de rétablissement ou une cause peut être publiée tardivement sans être capturée.
 
-            **Interprétation.** Une valeur absente signifie donc *non observée dans les snapshots disponibles*, et non nécessairement *information inexistante à la source*.
+            **Interprétation.** Une valeur absente signifie donc *non observée dans les relevés disponibles*, et non nécessairement *information inexistante à la source*.
             """
         )
 
@@ -1014,7 +1035,7 @@ elif page == "Explorer la carte":
 
         summary_col, cause_col_ui = st.columns([1, 1], gap="large")
         with summary_col:
-            render_section_header("Municipalités les plus touchées", "Top 8")
+            render_section_header("Municipalités les plus touchées", "8 principales municipalités")
             if {"municipality_label", "customers_affected"}.issubset(map_data.columns):
                 top_mun = (
                     map_data.groupby("municipality_label", as_index=False)
@@ -1097,7 +1118,7 @@ elif page == "Analyse territoriale":
             detail = ranking.head(15).rename(columns={
                 group_col: group_label, "pannes": "Pannes", "clients_affectes": "Clients affectés", "clients_max": "Impact max",
             })
-            st.dataframe(detail, width="stretch", hide_index=True, height=530)
+            show_table(detail, height=530)
 
 
 # =============================================================================
@@ -1108,7 +1129,7 @@ elif page == "Causes":
     render_page_header(
         "Origine",
         "Causes observées",
-        "Analyse des causes capturées dans les snapshots. Certaines causes peuvent être publiées tardivement et ne jamais être observées avant le rétablissement.",
+        "Analyse des causes observées dans les relevés. Certaines causes peuvent être publiées tardivement et ne jamais être observées avant le rétablissement.",
     )
 
     cause_col = get_cause_column(filtered)
@@ -1146,7 +1167,7 @@ elif page == "Causes":
             render_cause_impact(summary, cause_col)
 
         render_status(
-            "Une cause absente signifie qu’elle n’a pas été observée dans les snapshots disponibles; elle ne constitue pas automatiquement une erreur de données.",
+            "Une cause absente signifie qu’elle n’a pas été observée dans les relevés disponibles; elle ne constitue pas automatiquement une erreur de données.",
             "warning",
         )
 
@@ -1159,7 +1180,7 @@ elif page == "Surveillance":
     render_page_header(
         "Suivi",
         "Pannes à surveiller",
-        "Priorisation à partir de l’impact et de la durée observée. Les ETA ne sont présentés que lorsqu’ils ont été capturés.",
+        "Priorisation à partir de l’impact et de la durée observée. Les heures de rétablissement prévues sont affichées seulement lorsqu’elles ont été observées.",
     )
 
     priority = filtered.copy()
@@ -1180,8 +1201,8 @@ elif page == "Surveillance":
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Pannes majeures", format_int(unique_outage_count(major)))
     k2.metric("Clients concernés", format_int(safe_numeric_sum(major, "customers_affected")))
-    k3.metric("Durée observée max", f"{float(longest_hours or 0):.1f} h")
-    k4.metric("ETA observé", format_pct(eta_observed), help="Part des pannes actives pour lesquelles un ETA a été capturé dans les snapshots.")
+    k3.metric("Durée observée maximale", format_duration_hours(longest_hours or 0))
+    k4.metric("Prévision Hydro disponible", format_pct(eta_observed), help="Part des pannes actives pour lesquelles une heure de rétablissement prévue par Hydro-Québec a été observée.")
 
     if major.empty:
         render_status("Aucune panne majeure active selon le seuil sélectionné.", "good")
@@ -1205,7 +1226,7 @@ elif page == "Surveillance":
         render_section_header("Durées observées les plus longues", "Indépendamment de l’impact")
         render_duration_dotplot(priority, rows=10)
 
-    render_section_header("Dernières pannes détectées", "Première apparition dans les snapshots")
+    render_section_header("Dernières pannes détectées", "Première observation dans les relevés")
     recent = recent_outages.copy() if using_supabase() else latest.copy()
     if "first_capture_at" in recent.columns:
         recent = recent.sort_values("first_capture_at", ascending=False)
@@ -1232,12 +1253,12 @@ elif page == "Santé du pipeline":
     render_page_header(
         "Opérations",
         "Santé du pipeline",
-        "Fraîcheur des collectes, état des refresh analytiques et signaux d'anomalie sur les derniers snapshots.",
+        "Fraîcheur des collectes, état des mises à jour analytiques et signaux d'anomalie sur les derniers relevés.",
     )
 
     if not using_supabase():
         render_status(
-            "Le monitoring opérationnel nécessite Supabase, car il s'appuie sur collection_runs et app_refresh_state.",
+            "La surveillance opérationnelle nécessite Supabase, car elle s'appuie sur les journaux de collecte et l'état des mises à jour analytiques.",
             "warning",
         )
     elif pipeline_health.empty:
@@ -1262,38 +1283,34 @@ elif page == "Santé du pipeline":
         )
 
         def _format_age(minutes):
-            if minutes is None or pd.isna(minutes):
-                return "N/D"
-            if minutes < 120:
-                return f"{minutes:.0f} min"
-            return f"{minutes / 60:.1f} h"
+            return format_duration_minutes(minutes, missing="N/D")
 
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Dernière collecte", _format_age(assessment["collection_age_minutes"]))
-        k2.metric("Refresh incrémental", _format_age(assessment["analytics_age_minutes"]))
-        k3.metric("Refresh lourd", _format_age(assessment["heavy_age_minutes"]))
-        k4.metric("Pannes du snapshot", format_int(health_row.get("latest_success_outage_count", 0)))
+        k2.metric("Mise à jour analytique", _format_age(assessment["analytics_age_minutes"]))
+        k3.metric("Mise à jour complète", _format_age(assessment["heavy_age_minutes"]))
+        k4.metric("Pannes observées", format_int(health_row.get("latest_success_outage_count", 0)))
 
         s1, s2, s3, s4 = st.columns(4)
-        s1.metric("Runs réussis · 24 h", format_int(health_row.get("success_runs_24h", 0)))
-        s2.metric("Runs en erreur · 24 h", format_int(health_row.get("error_runs_24h", 0)))
+        s1.metric("Collectes réussies · 24 h", format_int(health_row.get("success_runs_24h", 0)))
+        s2.metric("Collectes en erreur · 24 h", format_int(health_row.get("error_runs_24h", 0)))
         s3.metric("Pannes actives", format_int(health_row.get("active_outages_count", 0)))
         s4.metric("Clients affectés", format_int(health_row.get("active_customers_affected", 0)))
 
         render_section_header("Derniers événements", "Horodatages Québec")
         event_rows = pd.DataFrame([
             {
-                "Événement": "Dernier snapshot réussi",
+                "Événement": "Dernière collecte réussie",
                 "Moment": format_quebec_datetime(health_row.get("latest_success_captured_at")),
                 "Identifiant": health_row.get("latest_success_snapshot_id") or "N/D",
             },
             {
-                "Événement": "Dernier refresh incrémental",
+                "Événement": "Dernière mise à jour analytique",
                 "Moment": format_quebec_datetime(health_row.get("incremental_refreshed_at")),
                 "Identifiant": "incremental_analytics",
             },
             {
-                "Événement": "Dernier refresh lourd",
+                "Événement": "Dernière mise à jour complète",
                 "Moment": format_quebec_datetime(health_row.get("heavy_refreshed_at")),
                 "Identifiant": "heavy_analytics",
             },
@@ -1304,7 +1321,7 @@ elif page == "Santé du pipeline":
         if change_pct is not None:
             direction = "hausse" if change_pct >= 0 else "baisse"
             st.caption(
-                f"Variation entre les deux derniers snapshots réussis : {abs(change_pct):.1f} % ({direction})."
+                f"Variation entre les deux dernières collectes réussies : {abs(change_pct):.1f} % ({direction})."
             )
 
         render_section_header("Alertes opérationnelles", "Seuils automatiques")
@@ -1319,9 +1336,9 @@ elif page == "Santé du pipeline":
         with st.expander("Seuils utilisés"):
             st.markdown(
                 "- Collecte : avertissement après **75 min**, critique après **120 min**.\n"
-                "- Refresh incrémental : avertissement après **75 min**, critique après **120 min**.\n"
-                "- Refresh lourd : avertissement après **30 h**, critique après **48 h**.\n"
-                "- Chute du nombre de pannes : avertissement à **-80 %** lorsque le snapshot précédent comptait au moins 20 pannes.\n"
+                "- Mise à jour analytique : avertissement après **1 h 15 min**, critique après **2 h**.\n"
+                "- Mise à jour complète : avertissement après **1 j 6 h**, critique après **2 j**.\n"
+                "- Chute du nombre de pannes : avertissement à **-80 %** lorsque le relevé précédent comptait au moins 20 pannes.\n"
                 "- Hausse : avertissement à **+300 %** avec au moins 50 pannes supplémentaires."
             )
 

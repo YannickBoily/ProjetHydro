@@ -19,6 +19,7 @@ from dashboard.config import (
     PLOT_TEMPLATE,
 )
 from dashboard.view_helpers import format_int, get_cause_column, get_geo
+from dashboard.display_formatting import format_duration_hours, format_quebec_datetime_short
 
 def get_data_request_url() -> str:
     """Retourner le lien public du formulaire de demande d'accès."""
@@ -194,12 +195,21 @@ def render_horizontal_ranking(
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
+def _public_text(series: pd.Series | None, index: pd.Index, fallback: str = "Non disponible") -> pd.Series:
+    """Return display-safe text values without exposing raw nulls."""
+    if series is None:
+        return pd.Series(fallback, index=index, dtype="object")
+    values = series.astype("object").where(series.notna(), fallback)
+    values = values.astype(str).str.strip()
+    return values.mask(values.eq(""), fallback)
+
+
 def render_clean_map(
     df: pd.DataFrame,
     height: int = 650,
     max_points: int | None = None,
 ) -> None:
-    """Afficher la carte des pannes avec une taille de point proportionnelle."""
+    """Afficher la carte avec une infobulle lisible destinée au public."""
     geo = get_geo(df)
     if geo.empty:
         st.warning("Aucune coordonnée valide selon les filtres actuels.")
@@ -211,34 +221,45 @@ def render_clean_map(
             geo = geo.sort_values("customers_affected", ascending=False).head(max_points)
         else:
             geo = geo.head(max_points)
-        st.caption(f"Carte limitée aux {len(geo):,} observations les plus importantes.")
+        st.caption(f"Carte limitée aux {format_int(len(geo))} observations les plus importantes.")
 
     if "customers_affected" in geo.columns:
-        customers = (
-            pd.to_numeric(geo["customers_affected"], errors="coerce")
-            .fillna(0)
-            .clip(lower=0)
-        )
+        customers = pd.to_numeric(geo["customers_affected"], errors="coerce").fillna(0).clip(lower=0)
         geo["taille_carte"] = customers.clip(lower=1).pow(0.35)
     else:
+        customers = pd.Series(0, index=geo.index, dtype="float64")
         geo["taille_carte"] = 4
 
     cause_col = get_cause_column(geo)
     if cause_col:
         geo[cause_col] = geo[cause_col].fillna("Inconnue")
-    hover_cols = [
-        "customers_affected",
-        "municipality_label",
-        "mrc_name",
-        "region_name",
-        "status_fr",
-        cause_col,
-        "captured_at",
-        "active_capture_at",
-        "start_time",
-        "estimated_restore",
-    ]
-    hover_cols = [col for col in hover_cols if col and col in geo.columns]
+
+    geo["__municipality"] = _public_text(
+        geo.get("municipality_label"), geo.index, "Municipalité non disponible"
+    )
+    geo["__customers"] = customers.map(lambda value: f"{format_int(value)} clients touchés")
+    geo["__cause"] = _public_text(
+        geo.get(cause_col) if cause_col else None, geo.index, "Cause non disponible"
+    )
+    geo["__region"] = _public_text(geo.get("region_name"), geo.index, "Région non disponible")
+    geo["__mrc"] = _public_text(geo.get("mrc_name"), geo.index, "Non disponible")
+    geo["__status"] = _public_text(geo.get("status_fr"), geo.index, "État non disponible")
+    geo["__start"] = (
+        geo["start_time"].map(format_quebec_datetime_short)
+        if "start_time" in geo.columns
+        else "—"
+    )
+    update_col = "active_capture_at" if "active_capture_at" in geo.columns else "captured_at"
+    geo["__updated"] = (
+        geo[update_col].map(format_quebec_datetime_short)
+        if update_col in geo.columns
+        else "—"
+    )
+    geo["__restore"] = (
+        geo["estimated_restore"].map(format_quebec_datetime_short)
+        if "estimated_restore" in geo.columns
+        else "—"
+    )
 
     fig = px.scatter_map(
         geo,
@@ -248,7 +269,17 @@ def render_clean_map(
         size_max=MAP_MARKER_MAX_SIZE,
         color=cause_col,
         color_discrete_map=CAUSE_COLORS,
-        hover_data=hover_cols,
+        custom_data=[
+            "__municipality",
+            "__customers",
+            "__cause",
+            "__region",
+            "__mrc",
+            "__status",
+            "__start",
+            "__updated",
+            "__restore",
+        ],
         center={"lat": 48.4, "lon": -71.8},
         zoom=4.65,
         height=height,
@@ -256,54 +287,40 @@ def render_clean_map(
             "analysis_cause_label_fr": "Cause",
             "history_cause_label_fr": "Cause",
             "latest_raw_cause_label_fr": "Cause",
-            "taille_carte": "Importance visuelle",
         },
     )
-    # Points principaux
     fig.update_traces(
-        marker=dict(
-            sizemin=MAP_MARKER_MIN_SIZE,
-        ),
+        marker=dict(sizemin=MAP_MARKER_MIN_SIZE),
         opacity=0.90,
+        hovertemplate=(
+            "<b>%{customdata[0]}</b><br>"
+            "%{customdata[1]}<br>"
+            "Cause : %{customdata[2]}<br>"
+            "Région : %{customdata[3]}<br>"
+            "MRC : %{customdata[4]}<br>"
+            "État : %{customdata[5]}<br><br>"
+            "Début : %{customdata[6]}<br>"
+            "Dernière mise à jour : %{customdata[7]}<br>"
+            "Rétablissement prévu : %{customdata[8]}"
+            "<extra></extra>"
+        ),
     )
 
-    # -------------------------------------------------------------------------
-    # Halo lumineux autour des points
-    # -------------------------------------------------------------------------
-
+    # Halo discret derrière les points, sans deuxième infobulle.
     main_traces = list(fig.data)
-
     for trace in main_traces:
         halo = copy.deepcopy(trace)
-
-        # Ne pas afficher le halo dans la légende
         halo.showlegend = False
-
-        # Le halo ne doit pas avoir son propre tooltip
         halo.hoverinfo = "skip"
         halo.hovertemplate = None
-
-    # Halo très transparent
         halo.opacity = 0.16
-
-    # Agrandir légèrement la couche située derrière le point
         if halo.marker.size is not None:
-            halo.marker.size = [
-                float(size) * 1.6
-                for size in halo.marker.size
-            ]
-
+            halo.marker.size = [float(size) * 1.6 for size in halo.marker.size]
         halo.marker.sizemin = MAP_MARKER_MIN_SIZE + 3
-
         fig.add_trace(halo)
 
-    # Placer les halos derrière les vrais points
     trace_count = len(main_traces)
-
-    fig.data = (
-        tuple(fig.data[trace_count:])
-        + tuple(fig.data[:trace_count])
-        )
+    fig.data = tuple(fig.data[trace_count:]) + tuple(fig.data[:trace_count])
     fig.update_layout(
         template=PLOT_TEMPLATE,
         map_style=MAP_STYLE,
@@ -312,12 +329,8 @@ def render_clean_map(
         hoverlabel=dict(
             bgcolor="#111827",
             bordercolor="#334155",
-            font=dict(
-                color="#f8fafc",
-                size=13,
-                family="Inter, Segoe UI, Arial",
-                ),
-            ),
+            font=dict(color="#f8fafc", size=13, family="Inter, Segoe UI, Arial"),
+        ),
         legend=dict(
             title=None,
             orientation="h",
@@ -460,10 +473,11 @@ def render_cause_impact(summary: pd.DataFrame, cause_col: str) -> None:
 
 
 def render_duration_dotplot(df: pd.DataFrame, rows: int = 10) -> None:
-    """Afficher les plus longues durées observées sous forme de dot plot."""
+    """Afficher les plus longues durées sans heures décimales dans l'interface."""
     if df is None or df.empty or "observed_duration_hours" not in df.columns:
         st.info("La durée observée n’est pas disponible dans cette source.")
         return
+
     chart = df.dropna(subset=["observed_duration_hours"]).copy()
     chart["observed_duration_hours"] = pd.to_numeric(
         chart["observed_duration_hours"], errors="coerce"
@@ -473,16 +487,47 @@ def render_duration_dotplot(df: pd.DataFrame, rows: int = 10) -> None:
     if chart.empty or "municipality_label" not in chart.columns:
         st.info("Aucune durée disponible.")
         return
+
     chart = chart.sort_values("observed_duration_hours")
+    chart["__duration_label"] = chart["observed_duration_hours"].map(format_duration_hours)
+    chart["__region"] = _public_text(chart.get("region_name"), chart.index, "Région non disponible")
+    chart["__status"] = _public_text(chart.get("status_fr"), chart.index, "État non disponible")
+    chart["__customers"] = (
+        pd.to_numeric(chart["customers_affected"], errors="coerce").fillna(0).map(format_int)
+        if "customers_affected" in chart.columns
+        else pd.Series("—", index=chart.index)
+    )
+
     fig = px.scatter(
         chart,
         x="observed_duration_hours",
         y="municipality_label",
         size="customers_affected" if "customers_affected" in chart.columns else None,
         size_max=22,
-        labels={"observed_duration_hours": "Durée observée, h", "municipality_label": ""},
-        hover_data=[c for c in ["customers_affected", "region_name", "status_fr"] if c in chart.columns],
+        custom_data=["__duration_label", "__customers", "__region", "__status"],
+        labels={"observed_duration_hours": "Durée observée", "municipality_label": ""},
     )
-    fig.update_traces(marker=dict(size=12 if "customers_affected" not in chart.columns else None))
+    if "customers_affected" not in chart.columns:
+        fig.update_traces(marker=dict(size=12))
+    fig.update_traces(
+        hovertemplate=(
+            "<b>%{y}</b><br>"
+            "Durée observée : %{customdata[0]}<br>"
+            "Clients affectés : %{customdata[1]}<br>"
+            "Région : %{customdata[2]}<br>"
+            "État : %{customdata[3]}<extra></extra>"
+        )
+    )
+
+    max_hours = float(chart["observed_duration_hours"].max()) if not chart.empty else 0.0
+    if max_hours > 0:
+        tickvals = [max_hours * i / 4 for i in range(5)]
+        fig.update_xaxes(
+            tickvals=tickvals,
+            ticktext=[format_duration_hours(value) for value in tickvals],
+            title="Durée observée",
+        )
+
     fig = clean_chart_layout(fig, height=430)
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+

@@ -11,9 +11,13 @@ import streamlit as st
 from dashboard.components import clean_chart_layout, render_page_header, render_section_header
 from dashboard.ml_live_inference import infer_active_outages, production_model_status
 from dashboard.view_helpers import format_int, format_pct, show_table
-
-
-QUEBEC_TIMEZONE = "America/Toronto"
+from dashboard.display_formatting import (
+    format_duration_hours,
+    format_gap_minutes_fr,
+    format_quebec_datetime,
+    format_quebec_datetime_short,
+    humanize_dataframe,
+)
 
 
 def _nested(mapping: dict, *keys, default=None):
@@ -26,12 +30,7 @@ def _nested(mapping: dict, *keys, default=None):
 
 
 def _metric_hours(value) -> str:
-    try:
-        if value is None or pd.isna(value):
-            return "n/a"
-        return f"{float(value):.2f} h"
-    except (TypeError, ValueError):
-        return "n/a"
+    return format_duration_hours(value, missing="n/a")
 
 
 def _pct_rate(value) -> str:
@@ -44,59 +43,15 @@ def _pct_rate(value) -> str:
 
 
 def _format_duration(value) -> str:
-    """Render a positive duration in a compact, human-readable form."""
-    try:
-        if value is None or pd.isna(value):
-            return "—"
-        minutes = max(int(round(float(value) * 60.0)), 0)
-    except (TypeError, ValueError):
-        return "—"
-
-    hours, remainder = divmod(minutes, 60)
-    if hours == 0:
-        return f"{remainder} min"
-    if remainder == 0:
-        return f"{hours} h"
-    return f"{hours} h {remainder:02d}"
+    return format_duration_hours(value)
 
 
 def _format_local_time(value) -> str:
-    """Render an ISO/pandas timestamp as a short Quebec-local date/time."""
-    ts = pd.to_datetime(value, errors="coerce", utc=True)
-    if pd.isna(ts):
-        return "—"
-    local = ts.tz_convert(QUEBEC_TIMEZONE)
-    month = {
-        1: "janv.",
-        2: "févr.",
-        3: "mars",
-        4: "avr.",
-        5: "mai",
-        6: "juin",
-        7: "juil.",
-        8: "août",
-        9: "sept.",
-        10: "oct.",
-        11: "nov.",
-        12: "déc.",
-    }[local.month]
-    return f"{local.day} {month} {local.strftime('%H:%M')}"
+    return format_quebec_datetime_short(value)
 
 
 def _format_gap_minutes(value) -> str:
-    """Explain the ML-vs-Hydro gap without requiring users to interpret signs."""
-    try:
-        if value is None or pd.isna(value):
-            return "—"
-        minutes = int(round(float(value)))
-    except (TypeError, ValueError):
-        return "—"
-
-    if abs(minutes) < 1:
-        return "≈ même heure"
-    if minutes < 0:
-        return f"{abs(minutes)} min plus tôt"
-    return f"{minutes} min plus tard"
+    return format_gap_minutes_fr(value)
 
 
 def _render_takeaway_card(model_mae, hydro_mae, reduction) -> None:
@@ -116,7 +71,7 @@ def _render_takeaway_card(model_mae, hydro_mae, reduction) -> None:
             À retenir
           </div>
           <div style="font-size:1.12rem; line-height:1.55; margin-top:6px; color:#e2e8f0;">
-            Sur le test temporel de cette release, le modèle <strong>live</strong> réduit l'erreur moyenne de
+            Sur la période de test gardée hors de l’entraînement, la prévision <strong>mise à jour pendant la panne</strong> réduit l'erreur moyenne de
             <strong>{html.escape(reduction_text)}</strong> par rapport à la dernière estimation Hydro-Québec
             (<strong>{html.escape(model_text)}</strong> contre <strong>{html.escape(hydro_text)}</strong>).
           </div>
@@ -130,27 +85,27 @@ def _render_takeaway_card(model_mae, hydro_mae, reduction) -> None:
 
 
 def _render_how_it_works() -> None:
-    render_section_header("Comment lire les trois estimations", "Du début de la panne jusqu'aux mises à jour live")
+    render_section_header("Comment lire les trois estimations", "Du début de la panne jusqu’aux mises à jour successives")
     c1, c2, c3 = st.columns(3, gap="medium")
 
     with c1:
-        st.markdown("#### 1 · Au début, sans ETA Hydro")
+        st.markdown("#### 1 · Au début, sans estimation Hydro-Québec")
         st.caption(
             "Le modèle estime la durée avec les caractéristiques observées de la panne. "
             "Cette version montre ce que nos données apportent à elles seules."
         )
 
     with c2:
-        st.markdown("#### 2 · Avec la première ETA Hydro")
+        st.markdown("#### 2 · Avec la première estimation Hydro-Québec")
         st.caption(
-            "La première heure de rétablissement publiée par Hydro-Québec est ajoutée comme information. "
+            "La première heure de rétablissement prévue par Hydro-Québec est ajoutée comme information. "
             "Le modèle apprend à la recalibrer."
         )
 
     with c3:
-        st.markdown("#### 3 · Pendant la panne : ML live")
+        st.markdown("#### 3 · Pendant la panne : prévision mise à jour")
         st.caption(
-            "À chaque nouveau snapshot, le modèle utilise uniquement l'information déjà connue et la dernière ETA disponible "
+            "À chaque nouveau relevé, le modèle utilise uniquement l'information déjà connue et la dernière estimation Hydro-Québec disponible "
             "pour réestimer le temps restant."
         )
 
@@ -163,9 +118,9 @@ def _initial_comparison_frame(metadata: dict) -> pd.DataFrame:
     hydro = benchmark.get("hydro_quebec") or {}
     return pd.DataFrame(
         [
-            {"Approche": "ML sans ETA Hydro", "Erreur moyenne (h)": no_eta.get("midpoint_mae_hours"), "Source": "Modèle ML"},
-            {"Approche": "ETA Hydro initiale", "Erreur moyenne (h)": hydro.get("midpoint_mae_hours"), "Source": "Hydro-Québec"},
-            {"Approche": "ML + première ETA", "Erreur moyenne (h)": first_eta.get("midpoint_mae_hours"), "Source": "Modèle ML"},
+            {"Approche": "Modèle sans estimation Hydro-Québec", "Erreur moyenne (h)": no_eta.get("midpoint_mae_hours"), "Source": "Modèle ML"},
+            {"Approche": "Première estimation Hydro-Québec", "Erreur moyenne (h)": hydro.get("midpoint_mae_hours"), "Source": "Hydro-Québec"},
+            {"Approche": "Modèle avec la première estimation Hydro-Québec", "Erreur moyenne (h)": first_eta.get("midpoint_mae_hours"), "Source": "Modèle ML"},
         ]
     ).dropna(subset=["Erreur moyenne (h)"])
 
@@ -174,32 +129,44 @@ def _live_comparison_frame(metadata: dict) -> pd.DataFrame:
     live_hq = _nested(metadata, "benchmarks", "live_hydro_latest_eta", "episode_weighted", default={}) or {}
     return pd.DataFrame(
         [
-            {"Approche": "Dernière ETA Hydro", "Erreur moyenne (h)": live_hq.get("hydro_mae_hours"), "Source": "Hydro-Québec"},
-            {"Approche": "ML live", "Erreur moyenne (h)": live_hq.get("model_mae_hours"), "Source": "Modèle ML"},
+            {"Approche": "Dernière estimation Hydro-Québec", "Erreur moyenne (h)": live_hq.get("hydro_mae_hours"), "Source": "Hydro-Québec"},
+            {"Approche": "Prévision du modèle mise à jour", "Erreur moyenne (h)": live_hq.get("model_mae_hours"), "Source": "Modèle ML"},
         ]
     ).dropna(subset=["Erreur moyenne (h)"])
 
 
 def _render_comparison_chart(frame: pd.DataFrame, *, height: int) -> None:
     if frame.empty:
-        st.info("Les métriques de comparaison ne sont pas disponibles pour cette release.")
+        st.info("Les métriques de comparaison ne sont pas disponibles pour cette version du modèle.")
         return
 
+    chart = frame.sort_values("Erreur moyenne (h)", ascending=False).copy()
+    chart["Durée lisible"] = chart["Erreur moyenne (h)"].map(format_duration_hours)
     fig = px.bar(
-        frame.sort_values("Erreur moyenne (h)", ascending=False),
+        chart,
         x="Erreur moyenne (h)",
         y="Approche",
         color="Source",
         orientation="h",
-        text="Erreur moyenne (h)",
+        text="Durée lisible",
+        custom_data=["Durée lisible"],
         color_discrete_map={"Hydro-Québec": "#64748b", "Modèle ML": "#38bdf8"},
     )
-    fig.update_traces(texttemplate="%{text:.2f} h", textposition="inside")
-    fig = clean_chart_layout(fig, height=height, show_legend=True)
-    fig.update_layout(
-        xaxis_title="Erreur moyenne absolue (heures) · plus bas = meilleur",
-        yaxis_title=None,
+    fig.update_traces(
+        texttemplate="%{text}",
+        textposition="inside",
+        hovertemplate="%{y}<br>Erreur moyenne : %{customdata[0]}<extra></extra>",
     )
+    max_hours = float(chart["Erreur moyenne (h)"].max()) if not chart.empty else 0.0
+    fig = clean_chart_layout(fig, height=height, show_legend=True)
+    if max_hours > 0:
+        tickvals = [max_hours * i / 4 for i in range(5)]
+        fig.update_xaxes(
+            tickvals=tickvals,
+            ticktext=[format_duration_hours(value) for value in tickvals],
+            title="Erreur moyenne · plus bas = meilleur",
+        )
+    fig.update_layout(yaxis_title=None)
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
@@ -223,10 +190,10 @@ def _build_public_table(predicted: pd.DataFrame) -> pd.DataFrame:
     gap = pd.to_numeric(predicted.get("live_vs_hydro_minutes"), errors="coerce")
     remaining = pd.to_numeric(predicted.get("live_predicted_remaining_hours"), errors="coerce")
 
-    table["Estimation Hydro"] = hydro_eta.map(_format_local_time)
-    table["Estimation ML live"] = ml_eta.map(_format_local_time)
-    table["Écart ML vs Hydro"] = gap.map(_format_gap_minutes)
-    table["Temps restant ML"] = remaining.map(_format_duration)
+    table["Rétablissement prévu par Hydro-Québec"] = hydro_eta.map(_format_local_time)
+    table["Rétablissement prévu par le modèle"] = ml_eta.map(_format_local_time)
+    table["Écart avec Hydro-Québec"] = gap.map(_format_gap_minutes)
+    table["Temps restant prévu"] = remaining.map(_format_duration)
 
     # Most operationally important rows first, while keeping unavailable predictions visible at the end.
     table["__sort_customers"] = customers.fillna(-1)
@@ -296,19 +263,19 @@ def _render_selected_outage(predicted: pd.DataFrame) -> None:
 
     c1, c2, c3 = st.columns([1, 1, 1], gap="medium")
     with c1:
-        st.metric("Estimation officielle Hydro", hydro_eta)
-        st.caption("Dernière heure de rétablissement observée dans les snapshots.")
+        st.metric("Rétablissement prévu par Hydro-Québec", hydro_eta)
+        st.caption("Dernière heure de rétablissement prévue observée dans les relevés.")
     with c2:
-        st.metric("Estimation ML live", ml_eta if live_available else "Pas encore disponible")
+        st.metric("Rétablissement prévu par le modèle", ml_eta if live_available else "Pas encore disponible")
         st.caption("Réestimation du temps restant avec l'information déjà connue.")
     with c3:
-        st.metric("Écart ML vs Hydro", gap if live_available else "—")
-        st.caption("Indique si le ML prévoit un rétablissement plus tôt ou plus tard.")
+        st.metric("Écart avec Hydro-Québec", gap if live_available else "—")
+        st.caption("Indique si le modèle prévoit un rétablissement plus tôt ou plus tard.")
 
     if live_available:
         st.markdown(
             f"**Lecture rapide :** le modèle estime encore **{remaining}** avant le rétablissement, "
-            f"soit **{gap}** que la dernière estimation Hydro observée."
+            f"soit **{gap}** que la dernière estimation Hydro-Québec observée."
         )
         p1, p2, p3, p4 = st.columns(4)
         for widget, threshold in zip((p1, p2, p3, p4), (1, 2, 4, 8)):
@@ -317,14 +284,14 @@ def _render_selected_outage(predicted: pd.DataFrame) -> None:
                 errors="coerce",
             ).iloc[0]
             widget.metric(
-                f"Encore > {threshold} h",
+                f"Encore active dans plus de {threshold} h",
                 format_pct(value * 100.0) if pd.notna(value) else "n/a",
                 help=f"Probabilité estimée par le modèle que cette panne soit encore active dans plus de {threshold} heure(s).",
             )
     else:
         st.info(
-            "Le modèle live n'est pas encore disponible pour cette panne. Cela arrive notamment lorsqu'aucune ETA Hydro "
-            "n'a encore été observée dans l'épisode courant. Les estimations initiales restent disponibles ci-dessous."
+            "La prévision mise à jour n'est pas encore disponible pour cette panne. Cela arrive notamment lorsqu'aucune estimation Hydro-Québec "
+            "n'a encore été observée dans l'épisode courant. Les estimations du début de la panne restent disponibles ci-dessous."
         )
 
     with st.expander("Voir comment l'estimation a évolué depuis le début de la panne", expanded=False):
@@ -332,13 +299,13 @@ def _render_selected_outage(predicted: pd.DataFrame) -> None:
         initial_no_eta = _format_local_time(row.get("initial_no_eta_predicted_restore_time"))
         initial_first_eta = _format_local_time(row.get("initial_first_eta_predicted_restore_time"))
         e1, e2, e3, e4 = st.columns(4)
-        e1.metric("ML au départ · sans ETA", initial_no_eta)
-        e2.metric("Première ETA Hydro", first_eta)
-        e3.metric("ML au départ · + ETA", initial_first_eta)
-        e4.metric("ML live maintenant", ml_eta if live_available else "—")
+        e1.metric("Modèle au départ · sans estimation Hydro-Québec", initial_no_eta)
+        e2.metric("Première estimation Hydro-Québec", first_eta)
+        e3.metric("Modèle au départ · avec estimation Hydro-Québec", initial_first_eta)
+        e4.metric("Prévision du modèle maintenant", ml_eta if live_available else "—")
         st.caption(
             "Ces valeurs correspondent à des moments différents : les deux estimations initiales sont figées au début de la panne, "
-            "alors que le ML live est recalculé avec les snapshots disponibles jusqu'à maintenant."
+            "alors que la prévision actuelle est recalculée avec les relevés disponibles jusqu’à maintenant."
         )
 
 
@@ -359,7 +326,7 @@ def render_ml_overview_teaser() -> None:
         with top:
             st.markdown("### 🤖 Prévisions ML de rétablissement")
             st.caption(
-                "Une couche ML complète les estimations officielles en recalculant le temps restant à partir des snapshots déjà observés."
+                "Une couche ML complète les estimations officielles en recalculant le temps restant à partir des relevés déjà observés."
             )
         with action:
             def _open_ml_page():
@@ -372,29 +339,29 @@ def render_ml_overview_teaser() -> None:
             )
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("Erreur moyenne ML live", _metric_hours(model_mae))
+        m1.metric("Erreur moyenne du modèle", _metric_hours(model_mae))
         m2.metric(
-            "Réduction d'erreur vs Hydro",
+            "Amélioration par rapport à Hydro-Québec",
             format_pct(float(reduction)) if reduction is not None else "n/a",
         )
-        m3.metric("ML plus proche", _pct_rate(closer))
+        m3.metric("Modèle plus proche", _pct_rate(closer))
         st.caption(
-            "Résultats du test temporel de la release de production. La page d'accueil ne lance aucune inférence ML : "
-            "les prédictions individuelles sont calculées seulement dans la page Prévisions ML."
+            "Résultats de la période de test de la version actuellement utilisée. La page d'accueil ne calcule aucune prévision individuelle : "
+            "elles sont calculées seulement dans la page Prévisions ML."
         )
 
 def render_ml_page(filtered: pd.DataFrame, *, ml_history: pd.DataFrame | None = None) -> None:
     """Render current inference from a promoted three-model release."""
     render_page_header(
-        "Machine learning",
+        "Prévisions assistées",
         "Prévisions de rétablissement assistées par ML",
-        "Choisissez une panne active pour comparer rapidement l'estimation officielle d'Hydro-Québec et la réestimation du modèle live.",
+        "Choisissez une panne active pour comparer rapidement l'estimation officielle d'Hydro-Québec et la prévision mise à jour du modèle.",
     )
 
     status = production_model_status()
     if not status["available"]:
         st.warning(
-            "Aucune release trois-modèles n'est promue pour Streamlit. Le dashboard n'utilise jamais automatiquement "
+            "Aucune version des trois modèles n'est actuellement publiée pour Streamlit. Le dashboard n'utilise jamais automatiquement "
             "un nouveau candidat d'entraînement."
         )
         st.code(
@@ -411,7 +378,7 @@ def render_ml_page(filtered: pd.DataFrame, *, ml_history: pd.DataFrame | None = 
     if ml_history is None or ml_history.empty:
         st.info(
             "Les modèles sont disponibles, mais l'historique du présent épisode des pannes actives n'est pas chargé. "
-            "La prédiction live nécessite Supabase afin de reconstruire uniquement les observations déjà connues."
+            "La prévision mise à jour nécessite Supabase afin de reconstruire uniquement les observations déjà connues."
         )
         return
 
@@ -441,26 +408,26 @@ def render_ml_page(filtered: pd.DataFrame, *, ml_history: pd.DataFrame | None = 
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Pannes actives suivies", format_int(len(predicted)))
-    k2.metric("Avec estimation ML live", format_int(live_count))
-    k3.metric("Erreur moyenne du ML live", _metric_hours(model_live_mae))
+    k2.metric("Avec une prévision actuelle", format_int(live_count))
+    k3.metric("Erreur moyenne du modèle", _metric_hours(model_live_mae))
     k4.metric(
-        "Amélioration vs Hydro-Québec",
+        "Amélioration par rapport à Hydro-Québec",
         format_pct(float(reduction)) if reduction is not None else "n/a",
     )
 
     if pd.notna(current_capture):
         st.caption(
-            "Prévisions actuelles calculées avec les snapshots disponibles jusqu'au "
-            f"**{current_capture.tz_convert(QUEBEC_TIMEZONE).strftime('%d %b %Y, %H:%M %Z')}**. "
+            "Prévisions actuelles calculées avec les relevés disponibles jusqu’au "
+            f"**{format_quebec_datetime(current_capture)}**. "
             "La collecte étant périodique, il s'agit de près du temps réel."
         )
 
     render_section_header("Consulter une panne", "Sélectionnez une panne active pour voir sa prévision en un coup d'œil")
     _render_selected_outage(predicted)
 
-    render_section_header("Toutes les pannes actives", "Hydro-Québec et ML côte à côte")
+    render_section_header("Toutes les pannes actives", "Hydro-Québec et le modèle côte à côte")
     st.caption(
-        "L'écart est formulé en langage courant : « plus tôt » signifie que le ML prévoit un rétablissement avant la dernière ETA Hydro connue."
+        "L’écart est formulé en langage courant : « plus tôt » signifie que le modèle prévoit un rétablissement avant la dernière estimation Hydro-Québec connue."
     )
     public_table = _build_public_table(predicted)
     if public_table.empty:
@@ -479,11 +446,11 @@ def render_ml_page(filtered: pd.DataFrame, *, ml_history: pd.DataFrame | None = 
     left, right = st.columns(2, gap="large")
     with left:
         st.markdown("### Au début de la panne")
-        st.caption("Erreur sur la durée totale prévue au premier snapshot. Plus bas = meilleur.")
+        st.caption("Erreur sur la durée totale prévue au premier relevé. Plus bas = meilleur.")
         _render_comparison_chart(_initial_comparison_frame(metadata), height=310)
     with right:
         st.markdown("### Pendant la panne")
-        st.caption("Erreur sur le temps restant, aux mêmes moments pour Hydro et le ML. Plus bas = meilleur.")
+        st.caption("Erreur sur le temps restant, aux mêmes moments pour Hydro-Québec et le modèle. Plus bas = meilleur.")
         _render_comparison_chart(_live_comparison_frame(metadata), height=310)
 
     no_eta_pair = _nested(
@@ -494,41 +461,41 @@ def render_ml_page(filtered: pd.DataFrame, *, ml_history: pd.DataFrame | None = 
     ) or {}
     hydro_initial = _nested(metadata, "benchmarks", "initial_hydro_first_eta", "hydro_quebec", default={}) or {}
 
-    render_section_header("À retenir", "Les principaux résultats de la release")
+    render_section_header("À retenir", "Les principaux résultats de la version actuelle")
     t1, t2, t3 = st.columns(3, gap="medium")
     with t1:
-        st.markdown("#### L'ETA Hydro apporte une information utile")
+        st.markdown("#### L’estimation Hydro-Québec apporte une information utile")
         st.caption(
-            f"Au départ, le ML sans ETA obtient {_metric_hours(no_eta_pair.get('midpoint_mae_hours'))}. "
-            f"Avec la première ETA Hydro, l'erreur passe à {_metric_hours(first_eta_pair.get('midpoint_mae_hours'))}."
+            f"Au départ, le modèle sans estimation Hydro-Québec obtient {_metric_hours(no_eta_pair.get('midpoint_mae_hours'))}. "
+            f"Avec la première estimation Hydro-Québec, l’erreur passe à {_metric_hours(first_eta_pair.get('midpoint_mae_hours'))}."
         )
     with t2:
-        st.markdown("#### Le ML live affine l'estimation")
+        st.markdown("#### La prévision mise à jour affine l’estimation")
         st.caption(
-            f"Pendant la panne, l'erreur moyenne est de {_metric_hours(model_live_mae)} pour le ML live, "
-            f"contre {_metric_hours(hydro_live_mae)} pour la dernière ETA Hydro aux mêmes moments."
+            f"Pendant la panne, l’erreur moyenne est de {_metric_hours(model_live_mae)} pour le modèle, "
+            f"contre {_metric_hours(hydro_live_mae)} pour la dernière estimation Hydro-Québec aux mêmes moments."
         )
     with t3:
         st.markdown("#### Une aide, pas une promesse")
         st.caption(
-            f"Le ML live est plus proche dans {_pct_rate(live_hq.get('model_closer_rate'))} des comparaisons pondérées par épisode. "
+            f"Le modèle est plus proche dans {_pct_rate(live_hq.get('model_closer_rate'))} des comparaisons pondérées par épisode. "
             "Une panne individuelle peut toutefois évoluer différemment."
         )
 
     with st.expander("Voir le détail technique des trois modèles", expanded=False):
         st.markdown(
-            f"**Release servie :** `{release_id}`  \n"
-            f"**Version du modèle :** `{status.get('model_version') or 'n/a'}`  \n"
-            + (f"**Données d'entraînement jusqu'au :** `{cutoff}`  \n" if cutoff else "")
+            f"**Identifiant de la version :** `{release_id}`  \n"
+            f"**Version technique du modèle :** `{status.get('model_version') or 'n/a'}`  \n"
+            + (f"**Données d'entraînement jusqu'au :** `{format_quebec_datetime(cutoff)}`  \n" if cutoff else "")
         )
         st.markdown(
             f"""
-            **Initial sans ETA — MAE sur cas comparables HQ :** {_metric_hours(no_eta_pair.get('midpoint_mae_hours'))}  
-            **ETA Hydro initiale :** {_metric_hours(hydro_initial.get('midpoint_mae_hours'))}  
-            **Initial + première ETA :** {_metric_hours(first_eta_pair.get('midpoint_mae_hours'))}  
-            **Live + dernière ETA :** {_metric_hours(model_live_mae)}  
-            **Dernière ETA Hydro, mêmes moments live :** {_metric_hours(hydro_live_mae)}  
-            **ML live plus proche :** {_pct_rate(live_hq.get('model_closer_rate'))}
+            **Au départ, sans estimation Hydro-Québec — erreur moyenne :** {_metric_hours(no_eta_pair.get('midpoint_mae_hours'))}  
+            **Première estimation Hydro-Québec — erreur moyenne :** {_metric_hours(hydro_initial.get('midpoint_mae_hours'))}  
+            **Au départ, avec la première estimation Hydro-Québec — erreur moyenne :** {_metric_hours(first_eta_pair.get('midpoint_mae_hours'))}  
+            **Prévision mise à jour — erreur moyenne :** {_metric_hours(model_live_mae)}  
+            **Dernière estimation Hydro-Québec aux mêmes moments — erreur moyenne :** {_metric_hours(hydro_live_mae)}  
+            **Modèle plus proche :** {_pct_rate(live_hq.get('model_closer_rate'))}
             """
         )
 
@@ -540,9 +507,10 @@ def render_ml_page(filtered: pd.DataFrame, *, ml_history: pd.DataFrame | None = 
             "live_probability_remaining_over_8h",
         ):
             if col in display:
-                display[col] = pd.to_numeric(display[col], errors="coerce") * 100.0
+                values = pd.to_numeric(display[col], errors="coerce") * 100.0
+                display[col] = values.map(lambda value: format_pct(value) if pd.notna(value) else "—")
 
-        show_table(
+        display = humanize_dataframe(
             display,
             [
                 "customers_affected",
@@ -562,18 +530,18 @@ def render_ml_page(filtered: pd.DataFrame, *, ml_history: pd.DataFrame | None = 
                 "live_probability_remaining_over_4h",
                 "ml_data_as_of",
             ],
-            height=430,
         )
+        show_table(display, height=430)
 
         st.markdown(
             """
-            **Initial sans ETA.** Prédiction faite avec le premier snapshot du présent épisode sans utiliser l'estimation Hydro-Québec.
+            **Au départ, sans estimation Hydro-Québec.** Prédiction faite avec le premier relevé du présent épisode sans utiliser l'estimation d'Hydro-Québec.
 
-            **Initial + première ETA.** La première ETA déjà connue est ajoutée comme variable; une révision future ne peut pas modifier cette prédiction initiale.
+            **Au départ, avec la première estimation Hydro-Québec.** La première estimation déjà connue est ajoutée comme variable; une révision future ne peut pas modifier cette prédiction initiale.
 
-            **Live + dernière ETA.** Le modèle utilise uniquement l'historique déjà observé dans le présent épisode et prédit le temps restant.
+            **Pendant la panne.** Le modèle utilise uniquement l'historique déjà observé dans le présent épisode et prédit le temps restant.
 
-            Le modèle est entraîné hors ligne. Ouvrir Streamlit ne réentraîne rien : l'application charge uniquement la release promue pour l'inférence.
+            Le modèle est entraîné hors ligne. Ouvrir Streamlit ne réentraîne rien : l'application charge uniquement la version publiée du modèle pour calculer les prévisions.
             """
         )
 
