@@ -32,6 +32,7 @@ from dashboard.config import ACCENT_COLOR, ACTIVE_FILE, DAILY_FILE, LATEST_FILE,
 from dashboard.data_access import (
     load_csv,
     load_supabase_active,
+    load_supabase_active_ml_history,
     load_supabase_daily_summary,
     load_supabase_history,
     load_supabase_latest,
@@ -43,6 +44,7 @@ from dashboard.data_access import (
     using_supabase,
 )
 from dashboard.pipeline_health import assess_pipeline_health
+from dashboard.ml_insights import render_ml_page
 from dashboard.view_helpers import (
     add_display_columns,
     bool_rate,
@@ -652,6 +654,7 @@ PAGE_OPTIONS = [
     "Analyse territoriale",
     "Causes",
     "Surveillance",
+    "Prévisions ML",
     "Santé du pipeline",
     "Qualité des données",
     "Données",
@@ -703,12 +706,15 @@ recent_outages = pd.DataFrame()
 latest_metrics = pd.DataFrame()
 history_all = pd.DataFrame()
 pipeline_health = pd.DataFrame()
+ml_history = pd.DataFrame()
 
 if using_supabase():
     if page == "Vue d’ensemble":
         daily = load_supabase_daily_summary()
     elif page == "Surveillance":
         recent_outages = add_display_columns(load_supabase_recent_outages(25))
+    elif page == "Prévisions ML":
+        ml_history = load_supabase_active_ml_history()
     elif page == "Santé du pipeline":
         pipeline_health = load_supabase_pipeline_health()
     elif page == "Qualité des données":
@@ -1188,7 +1194,8 @@ elif page == "Surveillance":
         render_section_header("Plus forts impacts", "Pannes actives")
         major_cols = [
             "customers_affected", "municipality_label", "region_name", "analysis_cause_label_fr",
-            "status_fr", "observed_duration_hours", "estimated_restore",
+            "status_fr", "observed_duration_hours", "predicted_duration_hours",
+            "predicted_end_at", "estimated_restore",
         ]
         show_table(priority.head(15), major_cols, height=455)
 
@@ -1205,6 +1212,14 @@ elif page == "Surveillance":
         "analysis_cause_label_fr", "first_capture_at", "estimated_restore",
     ]
     show_table(recent.head(25), recent_cols, height=480)
+
+
+# =============================================================================
+# Prévisions ML
+# =============================================================================
+
+elif page == "Prévisions ML":
+    render_ml_page(filtered, ml_history=ml_history)
 
 
 # =============================================================================

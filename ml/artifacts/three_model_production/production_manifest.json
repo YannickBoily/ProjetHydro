@@ -1,0 +1,10 @@
+{
+  "production_release_id": "Release_0.1",
+  "promoted_at_utc": "2026-10-15T18:07:30.025104+00:00",
+  "source_release_directory": "C:\\Users\\yanni\\Downloads\\ProjetHydro-clean-complet\\ProjetHydro\\ml\\releases\\Release_0.1",
+  "model_version": "aft-hf-three-model-v1",
+  "dataset_sha256": "c783b76940b84fb48ae657e2ef710b929b16abb9a3a90dc4f47ae67669dc90b3",
+  "dataset_cutoff_utc": "2026-10-15 16:41:00.823613+00",
+  "metadata_sha256": "4aa01a16d96f5d4d004ff1bce1d77adf8a12b0ef671790c63452b7bd7a71a6b0",
+  "served_model_kind": "candidate"
+}

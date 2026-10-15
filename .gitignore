@@ -19,3 +19,19 @@ data/geo/
 # Python cache
 __pycache__/
 *.pyc
+
+# ML outputs generated locally
+/ml/artifacts/three_model_candidate/
+/ml/artifacts/v3_candidate/
+/ml/releases/*/
+/tableau_exports/*.csv
+/tableau_exports/*.json
+
+# Full Supabase export: local only
+/raw_outage_snapshots_rows.csv
+
+# Local caches / raw snapshot work files
+/.pytest_cache/
+/data/raw/archive/
+/data/raw/current_snapshot.csv
+/data/raw/current_snapshot_meta.json

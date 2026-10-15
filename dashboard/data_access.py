@@ -174,32 +174,134 @@ def get_supabase_history_rows_limit() -> int:
 
 @st.cache_data(show_spinner=False, ttl=ACTIVE_CACHE_TTL_SECONDS)
 def load_supabase_active() -> pd.DataFrame:
-    """Charger les pannes actives et faire fitter les noms des colonnes avec les exports CSV."""
-    query = """
+    """Charger l'état courant des pannes actives depuis Supabase.
+
+    Les anciennes prédictions matérialisées dans ``app_ml_predictions`` ne sont
+    plus jointes ici : la page ML exécute maintenant l'inférence directement
+    avec la release trois-modèles promue.
+    """
+    df = load_supabase_query(
+        """
         SELECT *
         FROM app_active_outages
         ORDER BY customers_affected DESC NULLS LAST;
-    """
-    df = load_supabase_query(query)
+        """
+    )
 
     if not df.empty:
-        # Harmonise les noms de colonnes avec ceux des exports CSV.
         if "active_capture_at" not in df.columns and "latest_row_captured_at" in df.columns:
             df["active_capture_at"] = df["latest_row_captured_at"]
-
         if (
             "outage_age_hours_at_capture" not in df.columns
             and "outage_age_hours_at_latest_capture" in df.columns
         ):
             df["outage_age_hours_at_capture"] = df["outage_age_hours_at_latest_capture"]
-
         if (
             "restore_eta_hours_at_capture" not in df.columns
             and "restore_eta_hours_at_latest_capture" in df.columns
         ):
             df["restore_eta_hours_at_capture"] = df["restore_eta_hours_at_latest_capture"]
-
     return df
+
+
+@st.cache_data(show_spinner=False, ttl=ACTIVE_CACHE_TTL_SECONDS)
+def load_supabase_active_ml_history() -> pd.DataFrame:
+    """Load the current continuous episode history for every active outage.
+
+    Episode boundaries are reconstructed against *all successful collection runs*,
+    including zero-outage snapshots.  This prevents a reappearing outage ID from
+    accidentally inheriting features from an older episode.
+    """
+    query = """
+        WITH ordered_runs AS (
+            SELECT
+                snapshot_id,
+                captured_at,
+                ROW_NUMBER() OVER (ORDER BY captured_at, snapshot_id) AS snapshot_ord
+            FROM collection_runs
+            WHERE status = 'success'
+        ),
+        active_ids AS (
+            SELECT outage_id
+            FROM app_active_outages
+        ),
+        active_rows AS (
+            SELECT
+                r.snapshot_id,
+                r.outage_id,
+                r.customers_affected,
+                r.start_time,
+                r.estimated_restore,
+                r.status_code,
+                r.status,
+                r.cause_code,
+                r.cause_label,
+                r.municipality_id,
+                r.captured_at,
+                r.lon,
+                r.lat,
+                o.snapshot_ord
+            FROM active_ids a
+            INNER JOIN raw_outage_snapshots r
+                ON r.outage_id = a.outage_id
+            INNER JOIN ordered_runs o
+                ON o.snapshot_id = r.snapshot_id
+        ),
+        with_previous AS (
+            SELECT
+                a.*,
+                LAG(snapshot_ord) OVER (
+                    PARTITION BY outage_id
+                    ORDER BY snapshot_ord, captured_at
+                ) AS previous_snapshot_ord
+            FROM active_rows a
+        ),
+        numbered AS (
+            SELECT
+                p.*,
+                SUM(
+                    CASE
+                        WHEN previous_snapshot_ord IS NULL THEN 0
+                        WHEN snapshot_ord - previous_snapshot_ord > 1 THEN 1
+                        ELSE 0
+                    END
+                ) OVER (
+                    PARTITION BY outage_id
+                    ORDER BY snapshot_ord, captured_at
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                ) AS episode_no
+            FROM with_previous p
+        ),
+        current_episode AS (
+            SELECT DISTINCT ON (outage_id)
+                outage_id,
+                episode_no
+            FROM numbered
+            ORDER BY outage_id, snapshot_ord DESC, captured_at DESC
+        )
+        SELECT
+            n.snapshot_id,
+            n.outage_id,
+            n.customers_affected,
+            n.start_time,
+            n.estimated_restore,
+            n.status_code,
+            n.status,
+            n.cause_code,
+            n.cause_label,
+            n.municipality_id,
+            n.captured_at,
+            n.lon,
+            n.lat,
+            n.snapshot_ord,
+            n.outage_id || '::live::' || CAST(n.episode_no AS TEXT) AS episode_id
+        FROM numbered n
+        INNER JOIN current_episode c
+            ON c.outage_id = n.outage_id
+           AND c.episode_no = n.episode_no
+        ORDER BY n.outage_id, n.snapshot_ord, n.captured_at;
+    """
+    return load_supabase_query(query)
 
 
 @st.cache_data(show_spinner=False, ttl=RECENT_CACHE_TTL_SECONDS)
@@ -331,6 +433,7 @@ def clear_dashboard_caches() -> None:
     if using_supabase():
         for loader in (
             load_supabase_active,
+            load_supabase_active_ml_history,
             load_supabase_latest,
             load_supabase_recent_outages,
             load_supabase_latest_metrics,
