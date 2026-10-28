@@ -1,10 +1,10 @@
 {
-  "production_release_id": "Release_0.1",
-  "promoted_at_utc": "2026-10-15T18:07:30.025104+00:00",
-  "source_release_directory": "C:\\Users\\yanni\\Downloads\\ProjetHydro-clean-complet\\ProjetHydro\\ml\\releases\\Release_0.1",
+  "production_release_id": "aft-3model-20261028-b8f6f461",
+  "promoted_at_utc": "2026-10-28T04:24:00.050501+00:00",
+  "source_release_directory": "C:\\Users\\yanni\\Downloads\\ProjetHydro-github-final\\ml\\releases\\aft-3model-20261028-b8f6f461",
   "model_version": "aft-hf-three-model-v1",
-  "dataset_sha256": "c783b76940b84fb48ae657e2ef710b929b16abb9a3a90dc4f47ae67669dc90b3",
-  "dataset_cutoff_utc": "2026-10-15 16:41:00.823613+00",
-  "metadata_sha256": "4aa01a16d96f5d4d004ff1bce1d77adf8a12b0ef671790c63452b7bd7a71a6b0",
+  "dataset_sha256": "b8f6f461dd408540c250f0f1f04924cef44e1358cc8b70506413b79add281d67",
+  "dataset_cutoff_utc": "2026-10-28 03:20:47.214669+00",
+  "metadata_sha256": "add6bc6498e5484abb419ea5860f58e8b588af281e05de648e04a3c18adbe5e6",
   "served_model_kind": "candidate"
 }
